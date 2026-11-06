@@ -2,9 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ThreadHistoryAdapter, ExportedMessageRepositoryItem } from '@assistant-ui/react';
 
 export type SessionInfo = { id:string; title:string; updatedAt:number; model:string|null };
-type IntegrationState = {namespace:string;value:unknown};
 type SessionMessage = {id:string;parentId:string|null;role:string;createdAt:string;parts:{kind:string;data:unknown}[];extensions:Record<string,unknown>};
-export type PendingIntegration = { current:IntegrationState|null };
 
 // Translate assistant-ui messages at the UI boundary; the session service owns
 // the neutral message envelope and treats UI-only metadata as opaque extension data.
@@ -20,14 +18,17 @@ function encode(item:ExportedMessageRepositoryItem):SessionMessage {
 function decode(item:SessionMessage):ExportedMessageRepositoryItem {
   const ext=(item.extensions['assistant-ui']||{}) as {message?:Record<string,unknown>;parts?:Record<string,unknown>[];runConfig?:Record<string,unknown>|null};
   const content=item.parts.map((part,index)=>part.kind==='extension'?part.data:{type:part.kind,...(part.data as object),...(ext.parts?.[index]||{})});
-  return {parentId:item.parentId,message:{...(ext.message||{}),id:item.id,role:item.role,createdAt:new Date(item.createdAt),content},...(ext.runConfig?{runConfig:ext.runConfig}:{})} as unknown as ExportedMessageRepositoryItem;
+  return {parentId:item.parentId,message:{...(item.role==='assistant'?{status:{type:'complete',reason:'stop'},metadata:{custom:{},unstable_annotations:[],unstable_data:[],steps:[]}}:{}),...(ext.message||{}),id:item.id,role:item.role,createdAt:new Date(item.createdAt),content},...(ext.runConfig?{runConfig:ext.runConfig}:{})} as unknown as ExportedMessageRepositoryItem;
 }
-export function sessionHistory(id:string,onSaved:()=>void,onError:(message:string)=>void,pending:PendingIntegration):ThreadHistoryAdapter {
+export type SessionHistoryAdapter = ThreadHistoryAdapter & { beginResponse:(id:string,parent:string)=>void; completeResponse:(id:string)=>void };
+export function sessionHistory(id:string,onSaved:()=>void,onError:(message:string)=>void,ipc:typeof invoke=invoke):SessionHistoryAdapter {
+  const transientParents=new Map<string,string>();
   const save=async(item:ExportedMessageRepositoryItem)=>{
-    const integration=item.message.role==='assistant'?pending.current:null;
-    const commitIntegration=integration?{...integration,value:{...(integration.value as object),anchorMessageId:item.message.id}}:null;
-    try {await invoke('session_save',{id,item:encode(item),integration:commitIntegration});if(integration&&pending.current===integration)pending.current=null;onSaved();}
+    if(item.message.role!=='user')return; // The backend already committed the model result.
+    let parentId=item.parentId;
+    while(parentId && transientParents.has(parentId))parentId=transientParents.get(parentId)!;
+    try {await ipc('session_save',{id,item:encode({...item,parentId})});onSaved();}
     catch(error){onError(`Не удалось сохранить сообщение: ${String(error)}`);throw error;}
   };
-  return {scopeId:id,async load(){try{return {messages:(await invoke<SessionMessage[]>('session_load',{id})).map(decode)};}catch(error){onError(`Не удалось открыть историю: ${String(error)}`);throw error;}},append:save,update:save};
+  return {beginResponse:(id,parent)=>{transientParents.set(id,parent);},completeResponse:id=>{transientParents.delete(id);},scopeId:id,async load(){try{return {messages:(await ipc<SessionMessage[]>('session_load',{id})).map(decode)};}catch(error){onError(`Не удалось открыть историю: ${String(error)}`);throw error;}},append:save,update:save};
 }

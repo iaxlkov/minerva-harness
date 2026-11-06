@@ -36,6 +36,12 @@ pub struct IntegrationState {
     pub value: Value,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Turn {
+    pub role: String,
+    pub text: String,
+}
+
 pub struct SessionService {
     store: SessionStore,
 }
@@ -108,20 +114,45 @@ impl SessionService {
             None
         };
         self.store
-            .save(id, &message, title.as_deref(), state.as_ref())
+            .save(id, &message, title.as_deref(), state.as_ref(), false)
     }
-    pub fn history(
+    pub fn begin_run(
         &self,
+        session: &str,
         id: &str,
-        last_id: &str,
-    ) -> Result<(Vec<crate::providers::Turn>, Option<String>), String> {
+        parent: &str,
+        request: &Value,
+        invalidate: Option<&str>,
+    ) -> Result<(), String> {
+        if !valid_id(id) {
+            return Err("Некорректный ID запуска".into());
+        }
+        self.store
+            .begin_run(session, id, parent, request, invalidate)
+    }
+    pub fn commit_reply(
+        &self,
+        session: &str,
+        message: &SessionMessage,
+        integration: Option<&IntegrationState>,
+    ) -> Result<(), String> {
+        self.store.save(session, message, None, integration, true)
+    }
+    pub fn fail_run(
+        &self,
+        session: &str,
+        id: &str,
+        cancelled: bool,
+        error: &str,
+    ) -> Result<(), String> {
+        self.store.fail_run(session, id, cancelled, error)
+    }
+    pub fn history(&self, id: &str, last_id: &str) -> Result<(Vec<Turn>, Option<String>), String> {
         let messages = self.load(id)?;
-        let parent = messages
-            .iter()
-            .find(|m| m.id == last_id)
-            .ok_or("Сообщение истории не найдено")?
-            .parent_id
-            .clone();
+        let by_id: std::collections::HashMap<_, _> =
+            messages.iter().map(|m| (m.id.as_str(), m)).collect();
+        let last = by_id.get(last_id).ok_or("Сообщение истории не найдено")?;
+        let parent = last.parent_id.clone();
         let mut chain = Vec::new();
         let mut current = Some(last_id.to_owned());
         let mut remaining = messages.len() + 1;
@@ -130,11 +161,23 @@ impl SessionService {
                 return Err("В истории обнаружен цикл сообщений".into());
             }
             remaining -= 1;
-            let item = messages
-                .iter()
-                .find(|m| m.id == mid)
+            let item = by_id
+                .get(mid.as_str())
                 .ok_or("Сообщение истории не найдено")?;
             current = item.parent_id.clone();
+            if item
+                .extensions
+                .get("assistant-ui")
+                .and_then(|v| v.get("message"))
+                .and_then(|v| v.get("attachments"))
+                .and_then(Value::as_array)
+                .is_some_and(|v| !v.is_empty())
+            {
+                return Err("Вложения пока нельзя передать модели.".into());
+            }
+            if item.role == "system" {
+                return Err("Передача сохранённых system-сообщений пока не поддерживается.".into());
+            }
             if matches!(item.role.as_str(), "user" | "assistant") {
                 if item
                     .parts
@@ -150,8 +193,8 @@ impl SessionService {
                     .filter_map(|p| p.data.get("text").and_then(Value::as_str))
                     .collect::<Vec<_>>()
                     .join("\n");
-                if !text.trim().is_empty() {
-                    chain.push(crate::providers::Turn {
+                if item.role == "user" || !text.trim().is_empty() {
+                    chain.push(Turn {
                         role: item.role.clone(),
                         text,
                     });
@@ -181,6 +224,68 @@ fn valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_broken_links_and_rewriting_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = SessionService::open(&dir.path().join("history.sqlite")).unwrap();
+        service.create("one").unwrap();
+        service.create("two").unwrap();
+        service
+            .save("one", message("u1", None, "user", "first"), None)
+            .unwrap();
+        assert!(service
+            .save(
+                "two",
+                message("u2", Some("u1"), "user", "cross-session"),
+                None
+            )
+            .is_err());
+        assert!(service
+            .save(
+                "one",
+                message("u2", Some("missing"), "user", "orphan"),
+                None
+            )
+            .is_err());
+        assert!(service
+            .save("one", message("u1", Some("u1"), "user", "cycle"), None)
+            .is_err());
+        assert!(service
+            .save("one", message("u1", None, "user", "changed"), None)
+            .is_err());
+        service
+            .save("one", message("u1", None, "user", "first"), None)
+            .unwrap();
+        assert_eq!(service.load("one").unwrap().len(), 1);
+    }
+    #[test]
+    fn migrates_v2_and_recovers_interrupted_runs_under_exclusive_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        let service = SessionService::open(&path).unwrap();
+        service.create("one").unwrap();
+        service
+            .save("one", message("u1", None, "user", "first"), None)
+            .unwrap();
+        assert!(SessionService::open(&path).is_err());
+        drop(service);
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("DROP TABLE runs; PRAGMA user_version=2;")
+            .unwrap();
+        drop(db);
+        let service = SessionService::open(&path).unwrap();
+        service
+            .begin_run("one", "a1", "u1", &serde_json::json!({}), None)
+            .unwrap();
+        drop(service);
+        let service = SessionService::open(&path).unwrap();
+        assert_eq!(service.load("one").unwrap().len(), 1);
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let status: String = db
+            .query_row("SELECT status FROM runs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "interrupted");
+    }
     use serde_json::json;
     fn message(id: &str, parent: Option<&str>, role: &str, text: &str) -> SessionMessage {
         SessionMessage {
@@ -282,7 +387,7 @@ mod tests {
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
     }
     #[test]

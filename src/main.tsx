@@ -13,6 +13,7 @@ import { Plugins } from './Plugins';
 import { Settings, type Provider } from './Settings';
 import { CodexModelsContext, type CodexModel, type CodexOptions } from './CodexSettings';
 import { sessionHistory, type SessionInfo } from './sessionHistory';
+import { chatAdapter } from './chatAdapter';
 
 
 function Message({ role }: { role: 'user' | 'assistant' }) {
@@ -53,7 +54,7 @@ function Thread({ model, configured, providers, codexModels, onSelect }: { model
               </SelectGroup>}
             </SelectContent>
           </Select>
-          <ComposerPrimitive.Send className="send" aria-label="Отправить сообщение"><ArrowUp size={16}/></ComposerPrimitive.Send>
+          <AuiIf condition={state=>!state.thread.isRunning}><ComposerPrimitive.Send className="send" aria-label="Отправить сообщение"><ArrowUp size={16}/></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning}><ComposerPrimitive.Cancel className="send" aria-label="Остановить ответ">■</ComposerPrimitive.Cancel></AuiIf>
         </div>
       </ComposerPrimitive.Root>
       <div className="composer-hint">Enter — отправить <span>·</span> Shift + Enter — новая строка</div>
@@ -63,28 +64,13 @@ function Thread({ model, configured, providers, codexModels, onSelect }: { model
 
 function Chat({ model, configured, providers, codexModels, onSelect, onProviders, activePlugins, onNew, session, sessions, onSession, onSaved, onError }: { model: string; configured: boolean; providers:Provider[]; codexModels:CodexModel[]; onSelect:(value:string)=>void; onProviders:(p:Provider[])=>void; activePlugins:string[]; onNew:()=>void; session:SessionInfo; sessions:SessionInfo[]; onSession:(session:SessionInfo)=>void; onSaved:()=>void; onError:(message:string)=>void }) {
   const {options}=React.useContext(CodexModelsContext);
-  const pendingIntegration=useRef<{namespace:string;value:unknown}|null>(null);
   const [running,setRunning]=useState(false);
-  const history=useMemo(()=>sessionHistory(session.id,onSaved,onError,pendingIntegration),[session.id]);
-  const adapter = useMemo<ChatModelAdapter>(() => ({
-    async run({ messages }) {
-      setRunning(true);
-      try {
-        const last=messages.at(-1);
-        if(!last || last.role!=='user') throw new Error('Нужно сообщение пользователя.');
-        await history.append({parentId:messages.at(-2)?.id??null,message:last});
-        const selected=codexModels.find(item=>`codex:${item.id}`===model);
-        if(model.startsWith('codex:') && options.effort && selected?.reasoningEfforts?.length && !selected.reasoningEfforts.includes(options.effort)) throw new Error('Выбранный уровень рассуждений не поддерживается этой моделью. Измените его в настройках Codex.');
-        const result=await invoke<{text:string;summary:string|null;integration:{namespace:string;value:unknown}|null}>('session_run',{id:session.id,model,lastMessageId:last.id,options:{effort:options.effort||selected?.defaultReasoningEffort||null,summary:options.summary||'auto',verbosity:options.verbosity||null}});
-        pendingIntegration.current=result.integration;
-        if(result.summary)return {content:[{type:'reasoning' as const,text:result.summary},{type:'text' as const,text:result.text}]};
-        return {content:[{type:'text' as const,text:result.text}]};
-      } catch (error) {
-        pendingIntegration.current=null;
-        return { content: [{ type: 'text', text: `Не удалось получить ответ. ${String(error)}` }] };
-      } finally { setRunning(false); }
-    },
-  }), [model, options, codexModels, session.id, history]);
+  const history=useMemo(()=>sessionHistory(session.id,onSaved,onError),[session.id]);
+  const adapter = useMemo<ChatModelAdapter>(() => {
+    const selected=codexModels.find(item=>`codex:${item.id}`===model);
+    return chatAdapter({invoke,sessionId:session.id,model,history,onRunning:setRunning,onSaved,onError,
+      options:{effort:options.effort||selected?.defaultReasoningEffort||null,summary:options.summary||'auto',verbosity:options.verbosity||null}});
+  }, [model, options, codexModels, session.id, history]);
   const runtime = useLocalRuntime(adapter,{adapters:{history}});
   const [view, setView] = useState<'chat' | 'plugins'>('chat');
   return <AssistantRuntimeProvider runtime={runtime}><div className="oe-studio app-shell">
@@ -123,12 +109,25 @@ function App() {
   const [codexLoading,setCodexLoading]=useState(false);
   async function refreshCodexModels(){setCodexLoading(true);setCodexError('');try{setCodexModels(await invoke<CodexModel[]>('codex_models'));}catch(e){setCodexError(String(e));}finally{setCodexLoading(false);}}
   const [activePlugins,setActivePlugins]=useState<string[]>([]);
-  useEffect(()=>{ void invoke<Provider[]>('model_providers').then(setProviders).catch(()=>{}); void invoke<{id:string;enabled:boolean}[]>('list_plugins').then(items=>setActivePlugins(items.filter(x=>x.enabled).map(x=>x.id))).catch(()=>{}); },[]);
+  useEffect(()=>{ void invoke<Provider[]>('model_providers').then(setProviders).catch(error=>setSessionError(`Не удалось загрузить провайдеров: ${String(error)}`)); void invoke<{id:string;enabled:boolean}[]>('list_plugins').then(items=>setActivePlugins(items.filter(x=>x.enabled).map(x=>x.id))).catch(error=>setSessionError(`Не удалось загрузить модули: ${String(error)}`)); },[]);
   useEffect(()=>{if(activePlugins.includes('codex'))void refreshCodexModels();else setCodexModels([]);},[activePlugins]);
-  useEffect(()=>{if(!model && codexModels.length){const preferred=codexModels.find(m=>m.id===defaultModel&&!hidden.includes(m.id))||codexModels.find(m=>m.isDefault&&!hidden.includes(m.id));if(preferred){const value=`codex:${preferred.id}`;setModel(value);if(session)void invoke('session_set_model',{id:session.id,model:value}).catch(error=>setSessionError(`Не удалось сохранить модель: ${String(error)}`));}}},[codexModels,defaultModel,hidden,model,session?.id]);
+  useEffect(()=>{if(!model && codexModels.length){const preferred=codexModels.find(m=>m.id===defaultModel&&!hidden.includes(m.id))||codexModels.find(m=>m.isDefault&&!hidden.includes(m.id));if(preferred&&session){selectModel(`codex:${preferred.id}`);}}},[codexModels,defaultModel,hidden,model,session?.id]);
   const configured=model.startsWith('codex:')?codexModels.some(m=>`codex:${m.id}`===model):providers.some(p=>p.hasKey && p.models.some(m=>`api:${p.id}/${m}`===model));
   function selectSession(item:SessionInfo){setSessionError('');setSession(item);setModel(item.model||'');}
-  function selectModel(value:string){setModel(value);if(session){const id=session.id;setSessions(current=>current.map(item=>item.id===id?{...item,model:value}:item));setSession(current=>current?.id===id?{...current,model:value}:current);void invoke('session_set_model',{id,model:value}).catch(error=>setSessionError(`Не удалось сохранить модель: ${String(error)}`));}}
+  const modelWrites=useRef(Promise.resolve());
+  const activeSessionId=useRef(session?.id);activeSessionId.current=session?.id;
+  function selectModel(value:string){
+    if(!session)return;
+    const id=session.id;
+    modelWrites.current=modelWrites.current.then(async()=>{
+      try {
+        await invoke('session_set_model',{id,model:value});
+        setSessions(current=>current.map(item=>item.id===id?{...item,model:value}:item));
+        if(activeSessionId.current===id){setModel(value);setSession(current=>current?.id===id?{...current,model:value}:current);}
+      }catch(error){setSessionError(`Не удалось сохранить модель: ${String(error)}`);}
+    });
+  }
+
   if(!session)return <div className="oe-studio session-startup" role="status">{sessionLoading?'Загружаем историю…':sessionError||'Нет доступных диалогов'}{!sessionLoading&&<Button variant="outline" onClick={()=>void createSession()}>Повторить</Button>}</div>;
   return <CodexModelsContext.Provider value={{models:codexModels,loading:codexLoading,error:codexError,refresh:refreshCodexModels,hidden,setHidden,defaultModel,setDefaultModel,options,setOptions}}>{sessionError&&<div className="session-error" role="alert">{sessionError}<button aria-label="Закрыть уведомление" onClick={()=>setSessionError('')}>×</button></div>}<Chat key={session.id} session={session} sessions={sessions} onSession={selectSession} onSaved={()=>void refreshSessions()} onError={setSessionError} model={model} configured={configured} providers={providers} codexModels={codexModels.filter(m=>!hidden.includes(m.id)||model===`codex:${m.id}`)} onSelect={selectModel} onProviders={setProviders} activePlugins={activePlugins} onNew={()=>void createSession()}/></CodexModelsContext.Provider>;
 }
