@@ -5,7 +5,7 @@ import {
   AssistantRuntimeProvider, useLocalRuntime, ThreadPrimitive, AuiIf,
   MessagePrimitive, ComposerPrimitive, type ChatModelAdapter,
 } from '@assistant-ui/react';
-import { ArrowUp, MessageSquare, Plus, Puzzle, Sparkles } from 'lucide-react';
+import { ArrowUp, MessageSquare, Plus, Puzzle } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Select, SelectGroup, SelectLabel, SelectTrigger, SelectValue, SelectContent, SelectItem } from './components/ui/select';
 import './style.css';
@@ -27,7 +27,7 @@ function Thread({ model, configured, providers, codexModels, onSelect }: { model
   return <ThreadPrimitive.Root className="thread">
     <ThreadPrimitive.Viewport className="viewport">
       <AuiIf condition={(state) => state.thread.isEmpty}><div className="empty">
-        <div className="empty-icon"><Sparkles size={20}/></div>
+        <div className="empty-icon"><img src="/minerva-64.png" width={32} height={32} alt="" style={{borderRadius:8}}/></div>
         <h1>С чего начнём?</h1>
         <p>Задайте вопрос или расскажите, над чем работаете.</p>
         <div className="empty-note"><span className={configured ? "status-dot" : "status-dot unavailable"}/> {!model ? 'Добавьте провайдера в настройках' : configured ? (model.startsWith('codex:') ? 'Codex подключён' : 'Ключ настроен') : 'Ключ не задан'} <span className="empty-divider"/> {model || 'Модель не выбрана'}</div>
@@ -76,7 +76,7 @@ function Chat({ model, configured, providers, codexModels, onSelect, onProviders
   const [view, setView] = useState<'chat' | 'plugins'>('chat');
   return <AssistantRuntimeProvider runtime={runtime}><div className="oe-studio app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Sparkles size={18}/></div><div><strong>OE Studio</strong><small>AGENT WORKSPACE</small></div></div>
+      <div className="brand"><div className="brand-mark"><img src="/minerva-64.png" width={32} height={32} alt="" style={{borderRadius:9}}/></div><div><strong>Minerva Harness</strong><small>AGENT WORKSPACE</small></div></div>
       <div className="sidebar-section"><div className="side-heading">РАБОЧЕЕ ПРОСТРАНСТВО</div><Button variant="outline" className="new-chat" disabled={running} onClick={() => { setView('chat'); onNew(); }}><Plus data-icon="inline-start"/> Новая сессия</Button></div>
       <div className="side-heading recent-heading">ДИАЛОГИ</div><div className="session-list" aria-label="История диалогов">{sessions.map(item=><button key={item.id} disabled={running} className={`nav-item ${view==='chat'&&item.id===session.id?'selected':''}`} title={item.title} onClick={()=>{setView('chat');onSession(item);}}><MessageSquare size={15}/><span>{item.title}</span></button>)}</div><div className="side-heading plugins-heading">РАСШИРЕНИЯ</div><button className={`nav-item ${view === "plugins" ? "selected" : ""}`} onClick={() => setView("plugins")}><Puzzle size={15}/><span>Плагины</span></button>
       <div className="sidebar-bottom"><Settings providers={providers} onChange={onProviders} activePlugins={activePlugins}/></div>

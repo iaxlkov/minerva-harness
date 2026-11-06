@@ -161,6 +161,36 @@ async fn run_shell_command(
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("Missing Minerva icon"))?;
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_icon(icon)?;
+            }
+            let show =
+                tauri::menu::MenuItem::with_id(app, "show", "Открыть Minerva", true, None::<&str>)?;
+            let quit = tauri::menu::MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
+            tauri::tray::TrayIconBuilder::with_id("minerva")
+                .icon(tauri::image::Image::from_bytes(include_bytes!(
+                    "../icons/32x32.png"
+                ))?)
+                .icon_as_template(false)
+                .tooltip("Minerva Harness")
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
             let path = app.path().app_config_dir()?.join("shell.json");
             let sessions =
                 SessionService::open(&app.path().app_data_dir()?.join("sessions.sqlite3"))
