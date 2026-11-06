@@ -67,6 +67,8 @@ Tauri собирает Rust, Vite обслуживает интерфейс с H
 
 ## Проверки
 
+Для AI-разработки подключён [Ponytail](docs/ponytail.md): общие правила в `AGENTS.md` и шесть project-local skills в `.agents/skills`.
+
 ```powershell
 npm.cmd test
 npm.cmd run build
