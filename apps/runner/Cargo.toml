@@ -1,0 +1,8 @@
+[package]
+name = "minerva-runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minerva-execution = { path = "../../crates/execution" }
+serde_json = "1"

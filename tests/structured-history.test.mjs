@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { transcriptContent } from '../src/transcript.ts';
-import { sessionHistory } from '../src/sessionHistory.ts';
-import { chatAdapter } from '../src/chatAdapter.ts';
+import { transcriptContent } from '../apps/web/src/transcript.ts';
+import { sessionHistory } from '../apps/web/src/sessionHistory.ts';
+import { chatAdapter } from '../apps/web/src/chatAdapter.ts';
+test('neutral extension scalars stay read-only data and malformed tool identities are rejected',()=>{
+ assert.deepEqual(transcriptContent([{kind:'extension',data:null}]),[{type:'data',name:'provider-item',data:null}]);
+ assert.throws(()=>transcriptContent([{kind:'tool-call',data:null}]),/вызов инструмента/);
+});
 
 const parts=[
   {kind:'text',data:{text:'Проверю два источника.'}},

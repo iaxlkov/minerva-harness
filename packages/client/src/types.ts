@@ -1,0 +1,36 @@
+export type ApiError = { code: string; message: string; requestId: string };
+export type ApiResult<T> = {ok:true;value:T}|{ok:false;error:ApiError};
+export type WorkspaceRef = {workspaceId:string};
+export type Bootstrap = {protocolVersion:1;csrfToken:string;principal:{id:string};workspace:{id:string};capabilities:string[]};
+// UI preference values remain strings; the wire CodexOptions DTO permits null.
+export type CodexOptions = {effort:string;summary:string;verbosity:string};
+export type { ContentPart, SessionInfo, SessionMessage, StartRunRequest, RunHandle, RunSnapshot,
+  ProviderView as Provider, ProviderInput, CodexModel, CodexStatus, LoginStatus, PluginInfo,
+  ShellSettings, ShellResult, RunRequest, SessionRunResult as RunReply,
+  SessionBaseline, SessionEvent, JsonValue, CodexOptions as CodexWireOptions } from './generated';
+import type { ContentPart, SessionInfo, SessionMessage, StartRunRequest, RunHandle, RunSnapshot,
+  ProviderView as Provider, ProviderInput, CodexModel, CodexStatus, LoginStatus, PluginInfo,
+  ShellSettings, ShellResult, RunRequest, SessionRunResult as RunReply } from './generated';
+type Endpoint<P,R> = {params:P;result:R};
+type Empty = Record<string,never>;
+export interface Endpoints {
+ 'plugins.call':Endpoint<{id:string;method:string;params:import('./generated.ts').JsonValue},import('./generated.ts').JsonValue>;
+ 'runs.start':Endpoint<StartRunRequest,RunHandle>;
+ 'runs.get':Endpoint<RunHandle,RunSnapshot>;
+ 'runs.cancel':Endpoint<RunHandle,boolean>;
+ session_list:Endpoint<Empty,SessionInfo[]>; session_create:Endpoint<{id:string},void>;
+ session_get:Endpoint<{id:string},SessionInfo>; session_load:Endpoint<{id:string},SessionMessage[]>;
+ session_save:Endpoint<{id:string;item:SessionMessage},void>; session_set_model:Endpoint<{id:string;model:string},void>;
+ session_run:Endpoint<{id:string;request:RunRequest},RunReply>; session_cancel:Endpoint<{id:string;runId:string},boolean>;
+ model_providers:Endpoint<Empty,Provider[]>; save_model_provider:Endpoint<{provider:ProviderInput},Provider[]>;
+ discover_models:Endpoint<{provider:ProviderInput},string[]>; delete_model_provider:Endpoint<{id:string},Provider[]>;
+ codex_models:Endpoint<Empty,CodexModel[]>; codex_status:Endpoint<Empty,CodexStatus>; codex_quota:Endpoint<Empty,CodexStatus>;
+ codex_login:Endpoint<Empty,LoginStatus>; codex_login_status:Endpoint<Empty,LoginStatus|null>;
+ list_plugins:Endpoint<Empty,PluginInfo[]>; set_plugin_enabled:Endpoint<{id:string;enabled:boolean},PluginInfo[]>;
+ shell_settings:Endpoint<Empty,ShellSettings>; save_shell_settings:Endpoint<{settings:ShellSettings},ShellSettings>; run_shell_command:Endpoint<{command:string},ShellResult>;
+}
+export type Method = keyof Endpoints;
+export type Transport = (method:Method,params:Record<string,unknown>)=>Promise<unknown>;
+export interface MinervaClient {call<M extends Method>(method:M,params:Endpoints[M]['params']):Promise<Endpoints[M]['result']>}
+/** Typed UI facade: parameterless endpoints may omit their empty parameter object. */
+export type Invoke = <M extends Method>(method:M,...args:Record<string,never> extends Endpoints[M]['params'] ? [params?:Endpoints[M]['params']] : [params:Endpoints[M]['params']])=>Promise<Endpoints[M]['result']>;

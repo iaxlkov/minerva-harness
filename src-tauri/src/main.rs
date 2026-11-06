@@ -1,46 +1,80 @@
 #![windows_subsystem = "windows"]
 
-mod codex;
-mod codex_history;
-mod conversation;
-mod plugins;
-mod providers;
-mod rig_history;
-mod runs;
-mod session_store;
-mod sessions;
-mod shell;
-mod transcript;
+use minerva_runtime::codex;
+use minerva_runtime::conversation;
+use minerva_runtime::plugins;
+use minerva_runtime::providers;
+use minerva_runtime::runs;
+use minerva_runtime::sessions;
+use minerva_runtime::shell;
 
 use codex::{CodexModel, CodexStatus, LoginStatus};
+use minerva_runtime::{Runtime, RuntimeConfig};
 use plugins::{PluginInfo, PluginManager};
 use providers::{ProviderInput, ProviderView};
 use sessions::{SessionInfo, SessionMessage, SessionService};
 use shell::{ShellResult, ShellSettings};
+use std::sync::Arc;
 use tauri::Manager;
+#[tauri::command]
+async fn plugin_call(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+    id: String,
+    method: String,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    manager.plugin_call(&id, &method, params).await
+}
 
 #[tauri::command]
-fn session_list(store: tauri::State<'_, SessionService>) -> Result<Vec<SessionInfo>, String> {
+async fn run_start(
+    runtime: tauri::State<'_, Arc<Runtime>>,
+    request: minerva_runtime::StartRunRequest,
+) -> Result<minerva_runtime::RunHandle, String> {
+    runtime.inner().start_run(request).await
+}
+#[tauri::command]
+fn run_get(
+    runtime: tauri::State<'_, Arc<Runtime>>,
+    session_id: String,
+    run_id: String,
+) -> Result<minerva_runtime::RunSnapshot, String> {
+    runtime.get_run(&session_id, &run_id)
+}
+#[tauri::command]
+fn run_cancel(
+    runtime: tauri::State<'_, Arc<Runtime>>,
+    session_id: String,
+    run_id: String,
+) -> Result<bool, String> {
+    runtime.cancel_run(&session_id, &run_id)
+}
+
+#[tauri::command]
+fn session_list(store: tauri::State<'_, Arc<SessionService>>) -> Result<Vec<SessionInfo>, String> {
     store.list()
 }
 #[tauri::command]
-fn session_create(store: tauri::State<'_, SessionService>, id: String) -> Result<(), String> {
+fn session_create(store: tauri::State<'_, Arc<SessionService>>, id: String) -> Result<(), String> {
     store.create(&id)
 }
 #[tauri::command]
-fn session_get(store: tauri::State<'_, SessionService>, id: String) -> Result<SessionInfo, String> {
+fn session_get(
+    store: tauri::State<'_, Arc<SessionService>>,
+    id: String,
+) -> Result<SessionInfo, String> {
     store.get(&id)
 }
 #[tauri::command]
 fn session_load(
-    store: tauri::State<'_, SessionService>,
+    store: tauri::State<'_, Arc<SessionService>>,
     id: String,
 ) -> Result<Vec<SessionMessage>, String> {
     store.load(&id)
 }
 #[tauri::command]
 fn session_save(
-    store: tauri::State<'_, SessionService>,
+    store: tauri::State<'_, Arc<SessionService>>,
     id: String,
     item: SessionMessage,
 ) -> Result<(), String> {
@@ -51,7 +85,7 @@ fn session_save(
 }
 #[tauri::command]
 fn session_set_model(
-    store: tauri::State<'_, SessionService>,
+    store: tauri::State<'_, Arc<SessionService>>,
     id: String,
     model: String,
 ) -> Result<(), String> {
@@ -59,9 +93,9 @@ fn session_set_model(
 }
 #[tauri::command]
 async fn session_run(
-    store: tauri::State<'_, SessionService>,
-    manager: tauri::State<'_, PluginManager>,
-    runs: tauri::State<'_, runs::Runs>,
+    store: tauri::State<'_, Arc<SessionService>>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
+    runs: tauri::State<'_, Arc<runs::Runs>>,
     id: String,
     request: conversation::RunRequest,
 ) -> Result<conversation::SessionRunResult, String> {
@@ -69,7 +103,7 @@ async fn session_run(
 }
 #[tauri::command]
 fn session_cancel(
-    runs: tauri::State<'_, runs::Runs>,
+    runs: tauri::State<'_, Arc<runs::Runs>>,
     id: String,
     run_id: String,
 ) -> Result<bool, String> {
@@ -77,62 +111,68 @@ fn session_cancel(
 }
 #[tauri::command]
 async fn model_providers(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
 ) -> Result<Vec<ProviderView>, String> {
     Ok(manager.providers()?.list().await)
 }
 #[tauri::command]
 async fn save_model_provider(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     provider: ProviderInput,
 ) -> Result<Vec<ProviderView>, String> {
     manager.providers()?.save(provider).await
 }
 #[tauri::command]
 async fn discover_models(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     provider: ProviderInput,
 ) -> Result<Vec<String>, String> {
     manager.providers()?.discover(provider).await
 }
 #[tauri::command]
 async fn delete_model_provider(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     id: String,
 ) -> Result<Vec<ProviderView>, String> {
     manager.providers()?.delete(&id).await
 }
 #[tauri::command]
-async fn codex_models(manager: tauri::State<'_, PluginManager>) -> Result<Vec<CodexModel>, String> {
+async fn codex_models(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+) -> Result<Vec<CodexModel>, String> {
     manager.codex()?.models().await
 }
 #[tauri::command]
-async fn codex_status(manager: tauri::State<'_, PluginManager>) -> Result<CodexStatus, String> {
+async fn codex_status(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+) -> Result<CodexStatus, String> {
     manager.codex()?.status().await
 }
 
 #[tauri::command]
-async fn codex_quota(manager: tauri::State<'_, PluginManager>) -> Result<CodexStatus, String> {
+async fn codex_quota(manager: tauri::State<'_, Arc<PluginManager>>) -> Result<CodexStatus, String> {
     manager.codex()?.quota().await
 }
 #[tauri::command]
-async fn codex_login(manager: tauri::State<'_, PluginManager>) -> Result<LoginStatus, String> {
+async fn codex_login(manager: tauri::State<'_, Arc<PluginManager>>) -> Result<LoginStatus, String> {
     manager.codex()?.login().await
 }
 #[tauri::command]
 async fn codex_login_status(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
 ) -> Result<Option<LoginStatus>, String> {
     Ok(manager.codex()?.login_status().await)
 }
 #[tauri::command]
-async fn list_plugins(manager: tauri::State<'_, PluginManager>) -> Result<Vec<PluginInfo>, String> {
+async fn list_plugins(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+) -> Result<Vec<PluginInfo>, String> {
     manager.list().await
 }
 
 #[tauri::command]
 async fn set_plugin_enabled(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     id: String,
     enabled: bool,
 ) -> Result<Vec<PluginInfo>, String> {
@@ -140,19 +180,21 @@ async fn set_plugin_enabled(
 }
 
 #[tauri::command]
-async fn shell_settings(manager: tauri::State<'_, PluginManager>) -> Result<ShellSettings, String> {
+async fn shell_settings(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+) -> Result<ShellSettings, String> {
     Ok(manager.shell()?.settings().await)
 }
 #[tauri::command]
 async fn save_shell_settings(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
     manager.shell()?.save(settings).await
 }
 #[tauri::command]
 async fn run_shell_command(
-    manager: tauri::State<'_, PluginManager>,
+    manager: tauri::State<'_, Arc<PluginManager>>,
     command: String,
 ) -> Result<ShellResult, String> {
     manager.shell()?.run(command).await
@@ -191,18 +233,26 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
-            let path = app.path().app_config_dir()?.join("shell.json");
-            let sessions =
-                SessionService::open(&app.path().app_data_dir()?.join("sessions.sqlite3"))
-                    .map_err(std::io::Error::other)?;
-            app.manage(sessions);
-            app.manage(runs::Runs::default());
-            let manager = tauri::async_runtime::block_on(PluginManager::start(path))
-                .map_err(std::io::Error::other)?;
-            app.manage(manager);
+            let runtime = Arc::new(tauri::async_runtime::block_on(Runtime::start(
+                RuntimeConfig {
+                    tenant_id: "local".into(),
+                    workspace_id: "default".into(),
+                    data_dir: app.path().app_data_dir()?,
+                    config_dir: app.path().app_config_dir()?,
+                    profile: "desktop".into(),
+                },
+            ))?);
+            app.manage(runtime.sessions.clone());
+            app.manage(runtime.plugins.clone());
+            app.manage(runtime.runs.clone());
+            app.manage(runtime);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            plugin_call,
+            run_start,
+            run_get,
+            run_cancel,
             session_list,
             session_create,
             session_get,
@@ -230,10 +280,7 @@ fn main() {
         .expect("Could not start OE Rig prototype");
     app.run(|handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            tauri::async_runtime::block_on(handle.state::<PluginManager>().shutdown());
+            let _ = tauri::async_runtime::block_on(handle.state::<Arc<Runtime>>().shutdown());
         }
     });
 }
-
-#[cfg(test)]
-mod history_tests;

@@ -4,10 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
-    "build": "tsc --noEmit && vite build",
+    "dev": "vite --config apps/web/vite.config.ts",
+    "build": "tsc --noEmit && vite build --config apps/web/vite.config.ts",
     "tauri:dev": "tauri dev",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "server": "cargo run -p minerva-server --",
+    "dev:web": "cargo run -p minerva-server -- --dev-origin http://127.0.0.1:1420",
+    "test:e2e:web": "cargo build -p minerva-server && npm run build && playwright test",
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
+    "plugin:example": "cargo build -p minerva-review-example && node scripts/package-review-example.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.32",
@@ -17,12 +23,14 @@
     "@tauri-apps/api": "^2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cordis": "4.0.0-rc.12",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

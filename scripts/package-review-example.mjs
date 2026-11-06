@@ -1,0 +1,10 @@
+import {copyFile,mkdir,readFile,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+const output=path.resolve('agent-artifacts/review-example-package');
+const binary=`minerva-review-example${process.platform==='win32'?'.exe':''}`;
+await mkdir(path.join(output,'bin'),{recursive:true});
+await copyFile(path.resolve('target/debug',binary),path.join(output,'bin',binary));
+const manifest=JSON.parse(await readFile('plugins/review-example/plugin.json','utf8'));
+manifest.backend.entry=`bin/${binary}`;
+await writeFile(path.join(output,'plugin.json'),JSON.stringify(manifest,null,2)+'\n');
+console.log(output);

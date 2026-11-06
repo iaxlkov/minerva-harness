@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatAdapter } from '../src/chatAdapter.ts';
-import { sessionHistory } from '../src/sessionHistory.ts';
+import { chatAdapter } from '../apps/web/src/chatAdapter.ts';
+import { sessionHistory } from '../apps/web/src/sessionHistory.ts';
 
 const message = (id, role, text = '') => ({id, role, createdAt:new Date('2026-11-06T00:00:00Z'),content:[{type:'text',text}]});
 function setup(ipc) {

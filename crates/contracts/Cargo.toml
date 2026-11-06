@@ -1,0 +1,10 @@
+[package]
+name = "minerva-contracts"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+minerva-runtime = { path = "../runtime" }
+ts-rs = { version = "=12.0.1", features = ["serde-json-impl"] }
+serde_json = "1"

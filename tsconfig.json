@@ -16,6 +16,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
-    "src"
+    "apps/web/src",
+    "packages/client-models/src"
   ]
 }

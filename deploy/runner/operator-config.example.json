@@ -1,0 +1,6 @@
+{
+  "root": "/srv/minerva-workspaces",
+  "hostImage": "registry.example/minerva-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "executionImage": "registry.example/minerva-execution@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "controlNetwork": "minerva-control-private"
+}

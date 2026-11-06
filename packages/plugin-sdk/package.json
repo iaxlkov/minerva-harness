@@ -1,0 +1,9 @@
+{
+  "name": "@minerva/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./renderer": "./src/renderer.tsx" },
+  "dependencies": { "cordis": "4.0.0-rc.12" },
+  "peerDependencies": { "react": "^19.2.0" }
+}

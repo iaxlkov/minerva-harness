@@ -1,0 +1,1 @@
+{"id":"minerva.review-example","name":"Review example","description":"Summarizes supplied text without reading files.","version":"1.0.0","apiVersion":1,"requires":{},"capabilities":[],"backend":{"kind":"process","entry":"bin/minerva-review-example.exe"}}
