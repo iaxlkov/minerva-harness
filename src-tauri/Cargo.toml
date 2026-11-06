@@ -1,0 +1,23 @@
+[package]
+name = "oe-rig-prototype"
+version = "0.1.0"
+edition = "2021"
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+[dependencies]
+tauri = { version = "2", features = [] }
+cordis-rs = "=0.11.1"
+rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }
+rig-agent = { version = "0.46.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring = { version = "3", features = ["windows-native"] }
+url = "2"
+tempfile = "3"
+rusqlite = { version = "0.37", features = ["bundled"] }
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[dependencies.tokio]
+version = "1"
+features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"]
