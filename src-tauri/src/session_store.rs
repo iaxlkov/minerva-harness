@@ -30,10 +30,10 @@ impl SessionStore {
         let version: i64 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 3 {
+        if version > 4 {
             return Err("База диалогов создана более новой версией приложения".into());
         }
-        if version < 3 {
+        if version < 4 {
             let tx = db.transaction().map_err(|e| e.to_string())?;
             if version == 0 {
                 tx.execute_batch(" CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,updated_at INTEGER NOT NULL,model TEXT); CREATE TABLE messages(session_id TEXT NOT NULL REFERENCES sessions(id),message_id TEXT NOT NULL,parent_id TEXT,role TEXT NOT NULL,created_at TEXT NOT NULL,content_json TEXT NOT NULL,extras_json TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(session_id,message_id)); CREATE INDEX messages_session_seq ON messages(session_id,seq); CREATE TABLE session_integration_state(session_id TEXT NOT NULL REFERENCES sessions(id),namespace TEXT NOT NULL,state_json TEXT NOT NULL,PRIMARY KEY(session_id,namespace)); PRAGMA user_version=2;").map_err(|e|e.to_string())?;
@@ -44,6 +44,8 @@ impl SessionStore {
             if version < 3 {
                 tx.execute_batch(" CREATE TABLE runs(session_id TEXT NOT NULL REFERENCES sessions(id),id TEXT NOT NULL,parent_id TEXT NOT NULL,request_json TEXT NOT NULL,status TEXT NOT NULL,error TEXT,created_at INTEGER NOT NULL,PRIMARY KEY(session_id,id)); PRAGMA user_version=3;").map_err(|e|e.to_string())?;
             }
+            tx.execute_batch("PRAGMA user_version=4;")
+                .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
         db.execute("UPDATE runs SET status='interrupted',error='Приложение завершилось до сохранения результата' WHERE status='running'", []).map_err(|e| e.to_string())?;
@@ -109,7 +111,7 @@ impl SessionStore {
         if !exists {
             return Err("Диалог не найден".into());
         }
-        let mut q=db.prepare("SELECT message_id,parent_id,role,created_at,content_json,extras_json FROM messages WHERE session_id=?1 ORDER BY seq").map_err(|e|e.to_string())?;
+        let mut q=db.prepare("SELECT m.message_id,m.parent_id,m.role,m.created_at,m.content_json,CASE WHEN r.id IS NULL THEN m.extras_json ELSE json_set(m.extras_json,'$.execution',json_object('status',r.status,'error',r.error)) END FROM messages m LEFT JOIN runs r ON r.session_id=m.session_id AND r.id=m.message_id WHERE m.session_id=?1 ORDER BY m.seq").map_err(|e|e.to_string())?;
         let rows = q
             .query_map([id], |r| {
                 Ok((
@@ -161,17 +163,19 @@ impl SessionStore {
         }
         let content = serde_json::to_string(&m.parts).map_err(|e| e.to_string())?;
         let old: Option<(Option<String>,String,String,String)> = tx.query_row("SELECT parent_id,role,created_at,content_json FROM messages WHERE session_id=?1 AND message_id=?2", params![id,m.id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?;
+        let draft: bool = finish_run && tx.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE session_id=?1 AND id=?2 AND status='running')", params![id,m.id], |r|r.get(0)).map_err(|e|e.to_string())?;
         if let Some((parent, role, date, body)) = old {
             if parent != m.parent_id
                 || role != m.role
                 || date != m.created_at
-                || serde_json::from_str::<Value>(&body).map_err(|e| e.to_string())?
-                    != serde_json::to_value(&m.parts).map_err(|e| e.to_string())?
+                || (!draft
+                    && serde_json::from_str::<Value>(&body).map_err(|e| e.to_string())?
+                        != serde_json::to_value(&m.parts).map_err(|e| e.to_string())?)
             {
                 return Err("Сохранённое сообщение неизменяемо; создайте новую ветку.".into());
             }
         }
-        tx.execute("INSERT INTO messages(session_id,message_id,parent_id,role,created_at,content_json,extras_json,seq) VALUES(?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE session_id=?1)) ON CONFLICT(session_id,message_id) DO UPDATE SET extras_json=excluded.extras_json",params![id,m.id,m.parent_id,m.role,m.created_at,content,serde_json::to_string(&m.extensions).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO messages(session_id,message_id,parent_id,role,created_at,content_json,extras_json,seq) VALUES(?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE session_id=?1)) ON CONFLICT(session_id,message_id) DO UPDATE SET extras_json=excluded.extras_json,content_json=excluded.content_json",params![id,m.id,m.parent_id,m.role,m.created_at,content,serde_json::to_string(&m.extensions).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         if let Some(state) = state {
             tx.execute("INSERT INTO session_integration_state(session_id,namespace,state_json) VALUES(?1,?2,?3) ON CONFLICT(session_id,namespace) DO UPDATE SET state_json=excluded.state_json",params![id,state.namespace,state.value.to_string()]).map_err(|e|e.to_string())?;
         }
@@ -181,6 +185,21 @@ impl SessionStore {
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
+    }
+    // Only the owner of a running attempt may replace its provisional snapshot.
+    // Completed messages still go through the immutable save contract.
+    pub fn checkpoint(&self, session: &str, m: &SessionMessage) -> Result<(), String> {
+        if m.parts.is_empty() {
+            return Ok(());
+        }
+        let mut db = self.connection.lock().map_err(|e| e.to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM runs r JOIN messages p ON p.session_id=r.session_id AND p.message_id=r.parent_id WHERE r.session_id=?1 AND r.id=?2 AND r.parent_id=?3 AND r.status='running')", params![session,m.id,m.parent_id], |r|r.get(0)).map_err(|e|e.to_string())?;
+        if !valid || m.role != "assistant" {
+            return Err("Запуск не найден или уже завершён.".into());
+        }
+        tx.execute("INSERT INTO messages(session_id,message_id,parent_id,role,created_at,content_json,extras_json,seq) VALUES(?1,?2,?3,'assistant',?4,?5,?6,(SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE session_id=?1)) ON CONFLICT(session_id,message_id) DO UPDATE SET content_json=excluded.content_json,extras_json=excluded.extras_json",params![session,m.id,m.parent_id,m.created_at,serde_json::to_string(&m.parts).map_err(|e|e.to_string())?,serde_json::to_string(&m.extensions).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
     }
     pub fn set_model(&self, id: &str, model: &str) -> Result<(), String> {
         let db = self.connection.lock().map_err(|e| e.to_string())?;

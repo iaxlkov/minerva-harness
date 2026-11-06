@@ -1,13 +1,16 @@
 #![windows_subsystem = "windows"]
 
 mod codex;
+mod codex_history;
 mod conversation;
 mod plugins;
 mod providers;
+mod rig_history;
 mod runs;
 mod session_store;
 mod sessions;
 mod shell;
+mod transcript;
 
 use codex::{CodexModel, CodexStatus, LoginStatus};
 use plugins::{PluginInfo, PluginManager};
@@ -201,3 +204,6 @@ fn main() {
         }
     });
 }
+
+#[cfg(test)]
+mod history_tests;

@@ -202,6 +202,8 @@ pub struct CodexModel {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexReply {
+    #[serde(skip)]
+    pub transcript: crate::transcript::Transcript,
     pub thread_id: String,
     pub text: String,
     pub summary: String,
@@ -344,6 +346,7 @@ if let Some(id)=item["model"].as_str().or_else(||item["id"].as_str()){models.pus
             } Ok(models)
         }).await.map_err(|_|"Превышено время ожидания каталога Codex.".to_string())?
     }
+    #[cfg(test)]
     pub async fn chat(
         &self,
         model: String,
@@ -351,43 +354,107 @@ if let Some(id)=item["model"].as_str().or_else(||item["id"].as_str()){models.pus
         messages: Vec<crate::sessions::Turn>,
         options: CodexOptions,
     ) -> Result<CodexReply, String> {
+        self.chat_recorded(
+            model,
+            thread_id,
+            messages,
+            options,
+            std::sync::Arc::new(|_| Ok(())),
+        )
+        .await
+    }
+    pub async fn chat_recorded(
+        &self,
+        model: String,
+        thread_id: Option<String>,
+        messages: Vec<crate::sessions::Turn>,
+        options: CodexOptions,
+        sink: crate::transcript::TranscriptSink,
+    ) -> Result<CodexReply, String> {
         options.validate()?;
         let (last, previous) = messages.split_last().ok_or("Сообщение пустое.")?;
-        if last.role != "user" || last.text.trim().is_empty() {
+        if last.role != "user" || last.text().trim().is_empty() {
             return Err("Нужно сообщение пользователя.".into());
         }
         let prompt = if thread_id.is_some() || previous.is_empty() {
-            last.text.clone()
+            last.text()
         } else {
             let mut text = String::from("Предыдущий диалог:\n");
             for m in previous {
                 if m.role == "user" || m.role == "assistant" {
-                    text.push_str(&format!("{}: {}\n", m.role, m.text));
+                    text.push_str(&format!(
+                        "{}: {}\n",
+                        m.role,
+                        serde_json::to_string(&m.parts).map_err(|e| e.to_string())?
+                    ));
                 }
             }
-            text.push_str(&format!("\nНовое сообщение пользователя:\n{}", last.text));
+            text.push_str(&format!("\nНовое сообщение пользователя:\n{}", last.text()));
             text
         };
-        tokio::time::timeout(Duration::from_secs(180),async {
-            let mut rpc=Rpc::start().await?;
-            let method=if thread_id.is_some(){"thread/resume"}else{"thread/start"};
-            let mut params=if let Some(id)=thread_id {json!({"threadId":id,"model":model,"approvalPolicy":"never","sandbox":"read-only"})}else{json!({"model":model,"approvalPolicy":"never","sandbox":"read-only"})};
-            if let Some(verbosity)=options.verbosity.as_deref(){params["config"]=json!({"model_verbosity":verbosity});}
-            rpc.send(json!({"id":2,"method":method,"params":params})).await?;
-            let thread=rpc.response(2).await?["thread"]["id"].as_str().ok_or("App Server не вернул ID диалога.")?.to_owned();
-            let mut params=json!({"threadId":thread,"model":model,"input":[{"type":"text","text":prompt,"text_elements":[]}]});
-            if let Some(effort)=options.effort.as_deref(){params["effort"]=json!(effort);}
-            if let Some(summary)=options.summary.as_deref(){params["summary"]=json!(summary);}
-            rpc.send(json!({"id":3,"method":"turn/start","params":params})).await?;
-            let started=rpc.response(3).await?; let turn_id=started["turn"]["id"].as_str().ok_or("App Server не вернул ID хода.")?.to_owned(); let mut text=String::new(); let mut summary=String::new();
-            loop {let v=rpc.next().await?;if v.get("id").is_none() && !belongs_to_turn(&v,&thread,&turn_id){continue;}
-if v["method"]=="item/agentMessage/delta" {if let Some(delta)=v["params"]["delta"].as_str(){text.push_str(delta);}}
-                else if v["method"]=="item/reasoning/summaryTextDelta" {if let Some(delta)=v["params"]["delta"].as_str(){summary.push_str(delta);}}
-                else if v["method"]=="turn/completed" {let turn=&v["params"]["turn"];if turn["status"]!="completed" {return Err(format!("Запрос Codex завершился с ошибкой: {}",turn["error"]["message"].as_str().unwrap_or("выполнение прервано")));}
-if text.trim().is_empty(){return Err("Codex не вернул текст ответа.".into());}return Ok(CodexReply{thread_id:thread,text,summary});}
-                else if v.get("id").is_some() && v.get("method").is_some(){rpc.send(json!({"id":v["id"],"error":{"code":-32601,"message":"Request unsupported by client"}})).await?;}
+        tokio::time::timeout(Duration::from_secs(180), async {
+            let mut rpc = Rpc::start().await?;
+            let method = if thread_id.is_some() { "thread/resume" } else { "thread/start" };
+            let mut params = json!({"model":model,"approvalPolicy":"never","sandbox":"read-only"});
+            if let Some(id) = thread_id { params["threadId"] = json!(id); }
+            if let Some(verbosity) = options.verbosity.as_deref() {
+                params["config"] = json!({"model_verbosity":verbosity});
             }
-        }).await.map_err(|_|"Превышено время ожидания ответа Codex.".to_string())?
+            rpc.send(json!({"id":2,"method":method,"params":params})).await?;
+            let thread = rpc.response(2).await?["thread"]["id"].as_str()
+                .ok_or("App Server не вернул ID диалога.")?.to_owned();
+            let mut params = json!({"threadId":thread,"model":model,"input":[{"type":"text","text":prompt,"text_elements":[]}]});
+            if let Some(effort) = options.effort.as_deref() { params["effort"] = json!(effort); }
+            if let Some(summary) = options.summary.as_deref() { params["summary"] = json!(summary); }
+            rpc.send(json!({"id":3,"method":"turn/start","params":params})).await?;
+            let started = rpc.response(3).await?;
+            let turn_id = started["turn"]["id"].as_str().ok_or("App Server не вернул ID хода.")?.to_owned();
+            let mut text = String::new();
+            let mut summary = String::new();
+            let mut history = crate::codex_history::CodexHistory::default();
+            loop {
+                let event = rpc.next().await?;
+                if event.get("id").is_none() && !belongs_to_turn(&event, &thread, &turn_id) { continue; }
+                match event["method"].as_str() {
+                    Some("item/started" | "item/completed") => {
+                        history.item(&event["params"]["item"], event["method"] == "item/completed")?;
+                        sink(&history.snapshot())?;
+                    }
+                    Some("item/agentMessage/delta") => {
+                        if let Some(delta) = event["params"]["delta"].as_str() { text.push_str(delta); }
+                    }
+                    Some("item/reasoning/summaryTextDelta") => {
+                        if let Some(delta) = event["params"]["delta"].as_str() { summary.push_str(delta); }
+                    }
+                    Some("turn/completed") => {
+                        let turn = &event["params"]["turn"];
+                        if let Some(items) = turn["items"].as_array() {
+                            for item in items { history.item(item, item["status"] != "inProgress")?; }
+                        }
+                        sink(&history.snapshot())?;
+                        if turn["status"] != "completed" {
+                            return Err(format!("Запрос Codex завершился с ошибкой: {}", turn["error"]["message"].as_str().unwrap_or("выполнение прервано")));
+                        }
+                        let mut transcript = history.snapshot();
+                        // Older servers may provide only text deltas. Prefer the
+                        // authoritative completed items when they are present.
+                        if !transcript.parts.iter().any(|p|p.kind=="text") && !text.is_empty() {
+                            transcript.parts.push(crate::sessions::ContentPart::text("text", &text));
+                        }
+                        if !transcript.parts.iter().any(|p|p.kind=="reasoning") && !summary.is_empty() {
+                            transcript.parts.insert(0, crate::sessions::ContentPart::text("reasoning", &summary));
+                        }
+                        if transcript.parts.is_empty() { return Err("Codex не вернул содержимое ответа.".into()); }
+                        sink(&transcript)?;
+                        return Ok(CodexReply { thread_id:thread, text:transcript.text(), summary, transcript });
+                    }
+                    _ if event.get("id").is_some() && event.get("method").is_some() => {
+                        rpc.send(json!({"id":event["id"],"error":{"code":-32601,"message":"Request unsupported by client"}})).await?;
+                    }
+                    _ => {}
+                }
+            }
+        }).await.map_err(|_| "Превышено время ожидания ответа Codex.".to_string())?
     }
 }
 pub struct CodexPlugin(pub Arc<CodexService>);
@@ -519,10 +586,10 @@ mod tests {
             .chat(
                 model.clone(),
                 None,
-                vec![crate::sessions::Turn {
-                    role: "user".into(),
-                    text: "Сколько будет 17 плюс 25? Ответь кратко.".into(),
-                }],
+                vec![crate::sessions::Turn::plain(
+                    "user",
+                    "Сколько будет 17 плюс 25? Ответь кратко.",
+                )],
                 options,
             )
             .await
@@ -532,10 +599,10 @@ mod tests {
             .chat(
                 model,
                 Some(reply.thread_id.clone()),
-                vec![crate::sessions::Turn {
-                    role: "user".into(),
-                    text: "Ответь одним словом: да.".into(),
-                }],
+                vec![crate::sessions::Turn::plain(
+                    "user",
+                    "Ответь одним словом: да.",
+                )],
                 CodexOptions::default(),
             )
             .await

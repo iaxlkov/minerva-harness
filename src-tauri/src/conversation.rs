@@ -18,8 +18,9 @@ pub struct RunRequest {
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRunResult {
-    pub text: String,
-    pub summary: Option<String>,
+    pub parts: Vec<ContentPart>,
+    #[serde(skip)]
+    replay: Map<String, serde_json::Value>,
     #[serde(skip)]
     integration: Option<IntegrationState>,
 }
@@ -55,7 +56,7 @@ pub async fn run(
     let (turns, parent) = store.history(id, &request.last_message_id)?;
     if turns
         .last()
-        .is_none_or(|m| m.role != "user" || m.text.trim().is_empty())
+        .is_none_or(|m| m.role != "user" || m.text().trim().is_empty())
         || request.created_at.is_empty()
     {
         return Err("Нужно непустое сообщение пользователя и время ответа.".into());
@@ -72,19 +73,47 @@ pub async fn run(
         id: request.response_id.clone(),
         settled: false,
     };
+    let durable_store = store.clone();
+    let session_id = id.to_owned();
+    let response_id = request.response_id.clone();
+    let parent_id = request.last_message_id.clone();
+    let created_at = request.created_at.clone();
+    let sink: crate::transcript::TranscriptSink = std::sync::Arc::new(move |transcript| {
+        let mut extensions = Map::new();
+        extensions.insert("replay".into(), serde_json::json!(transcript.replay));
+        durable_store.checkpoint(
+            &session_id,
+            &SessionMessage {
+                id: response_id.clone(),
+                parent_id: Some(parent_id.clone()),
+                role: "assistant".into(),
+                created_at: created_at.clone(),
+                parts: transcript.parts.clone(),
+                extensions,
+            },
+        )
+    });
     let result = tokio::select! {
         biased;
         _ = guard.cancel.changed() => Err("Запрос отменён.".to_string()),
-        result = execute(manager,&request,turns,parent,state) => result,
+        result = execute(manager,&request,turns,parent,state,sink) => result,
     };
     let result = result.and_then(|result| {
-        if result.text.trim().is_empty() { return Err("Модель не вернула текст ответа.".into()); }
-        let mut parts = Vec::new();
-        if let Some(summary) = result.summary.as_ref().filter(|s|!s.is_empty()) { parts.push(ContentPart{kind:"reasoning".into(),data:json!({"text":summary})}); }
-        parts.push(ContentPart{kind:"text".into(),data:json!({"text":result.text})});
-        let message = SessionMessage{id:request.response_id.clone(),parent_id:Some(request.last_message_id),role:"assistant".into(),created_at:request.created_at,parts,extensions:Map::new()};
-        let state = result.integration.as_ref().map(|s| IntegrationState{namespace:s.namespace.clone(),value:json!({"model":request.model,"threadId":s.value["threadId"],"anchorMessageId":message.id})});
-        store.commit_reply(id,&message,state.as_ref())?;
+        if result.parts.is_empty() {
+            return Err("Модель не вернула содержимое ответа.".into());
+        }
+        let mut extensions = Map::new();
+        extensions.insert("replay".into(), json!(result.replay));
+        let message = SessionMessage {
+            id:request.response_id.clone(), parent_id:Some(request.last_message_id),
+            role:"assistant".into(), created_at:request.created_at,
+            parts:result.parts.clone(), extensions,
+        };
+        let state = result.integration.as_ref().map(|s| IntegrationState {
+            namespace:s.namespace.clone(),
+            value:json!({"model":request.model,"threadId":s.value["threadId"],"anchorMessageId":message.id}),
+        });
+        store.commit_reply(id, &message, state.as_ref())?;
         Ok(result)
     });
     if let Err(error) = &result {
@@ -100,6 +129,7 @@ async fn execute(
     turns: Vec<crate::sessions::Turn>,
     parent: Option<String>,
     state: Option<serde_json::Value>,
+    sink: crate::transcript::TranscriptSink,
 ) -> Result<SessionRunResult, String> {
     let model = request.model.as_str();
     if let Some(codex_model) = model.strip_prefix("codex:") {
@@ -108,11 +138,11 @@ async fn execute(
             .map_err(|e| format!("Некорректные настройки Codex: {e}"))?;
         let result = manager
             .codex()?
-            .chat(codex_model.into(), thread, turns, options)
+            .chat_recorded(codex_model.into(), thread, turns, options, sink)
             .await?;
         return Ok(SessionRunResult {
-            text: result.text,
-            summary: Some(result.summary),
+            parts: result.transcript.parts,
+            replay: result.transcript.replay,
             integration: Some(IntegrationState {
                 namespace: "codex".into(),
                 value: serde_json::json!({"model":model,"threadId":result.thread_id}),
@@ -123,10 +153,13 @@ async fn execute(
         .strip_prefix("api:")
         .ok_or("Выберите модель в настройках.")?;
     let (provider, model) = value.split_once('/').ok_or("Некорректный ID модели")?;
-    let text = manager.providers()?.chat(provider, model, turns).await?;
+    let transcript = manager
+        .providers()?
+        .chat_recorded(provider, model, turns, sink)
+        .await?;
     Ok(SessionRunResult {
-        text,
-        summary: None,
+        parts: transcript.parts,
+        replay: transcript.replay,
         integration: None,
     })
 }
@@ -388,7 +421,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result.text, "local reply");
+        assert_eq!(result.parts[0].data["text"], "local reply");
         assert!(result.integration.is_none());
         let saved = store.load("one").unwrap();
         assert_eq!(saved.last().unwrap().id, "a2");

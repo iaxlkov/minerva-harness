@@ -1,10 +1,7 @@
 //! Model provider configuration and write-only OS credentials.
 use cordis::{Context, Plugin, Service};
 use rig_agent::AgentBuilder;
-use rig_core::{
-    completion::Message,
-    providers::{anthropic::AnthropicConfig, openai::OpenAIConfig},
-};
+use rig_core::providers::{anthropic::AnthropicConfig, openai::OpenAIConfig};
 use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, fs, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
@@ -288,7 +285,19 @@ impl ProviderService {
             .await
             .map_err(|_| "Превышено время ожидания списка моделей.".to_string())?
     }
+    #[cfg(test)]
     pub async fn chat(&self, id: &str, model: &str, messages: Vec<Turn>) -> Result<String, String> {
+        self.chat_recorded(id, model, messages, std::sync::Arc::new(|_| Ok(())))
+            .await
+            .map(|v| v.text())
+    }
+    pub async fn chat_recorded(
+        &self,
+        id: &str,
+        model: &str,
+        messages: Vec<Turn>,
+        sink: crate::transcript::TranscriptSink,
+    ) -> Result<crate::transcript::Transcript, String> {
         let provider = self
             .providers
             .lock()
@@ -306,24 +315,30 @@ impl ProviderService {
             .or_else(|| Self::env_key(id, &provider.base_url))
             .ok_or("API-ключ не задан.")?;
         let (last, prev) = messages.split_last().ok_or("Сообщение пустое.")?;
-        if last.role != "user" || last.text.trim().is_empty() {
+        if last.role != "user" || last.text().trim().is_empty() {
             return Err("Нужно сообщение пользователя.".into());
         }
-        let mut history = Vec::new();
-        for m in prev {
-            match m.role.as_str() {
-                "user" => history.push(Message::user(&m.text)),
-                "assistant" => history.push(Message::assistant(&m.text)),
-                _ => return Err("Неизвестная роль.".into()),
-            }
+        let history = crate::rig_history::replay(prev)?;
+        macro_rules! run_agent {
+            ($model:expr) => {{
+                let builder = AgentBuilder::new($model).preamble(PREAMBLE);
+                let builder = if provider.protocol == "anthropic-messages" {
+                    builder.max_tokens(4096)
+                } else { builder };
+                let agent = builder.build();
+                let request = agent.prompt(last.text()).history(history)
+                    .add_hook(crate::rig_history::HistoryHook::new(sink.clone()));
+                let response = tokio::time::timeout(std::time::Duration::from_secs(90), request)
+                    .await.map_err(|_| "Превышено время ожидания модели.")?
+                    .map_err(|_| "Не удалось получить ответ от провайдера. Проверьте адрес, ключ и модель.")?;
+                // PromptResponse owns only this run's additions: skip its input
+                // prompt, retain every accepted model turn and tool result.
+                let generated = response.messages.get(1..).ok_or("Rig не вернул историю ответа.")?;
+                let transcript = crate::rig_history::capture(generated)?;
+                sink(&transcript)?;
+                Ok(transcript)
+            }};
         }
-        macro_rules! run_agent { ($model:expr) => {{
-            let builder=AgentBuilder::new($model).preamble(PREAMBLE);
-            let builder=if provider.protocol=="anthropic-messages" {builder.max_tokens(4096)}else{builder};
-            let agent=builder.build();
-            let response=tokio::time::timeout(std::time::Duration::from_secs(90),agent.chat(&last.text,&mut history)).await.map_err(|_|"Превышено время ожидания модели.")?.map_err(|_|"Не удалось получить ответ от провайдера. Проверьте адрес, ключ и модель.")?;
-            Ok(response.output())
-        }}; }
         match provider.protocol.as_str() {
             "openai-chat" => run_agent!(OpenAIConfig::new(key)
                 .with_base_url(provider.base_url)
@@ -366,8 +381,13 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     #[tokio::test]
-    async fn responses_and_anthropic_keep_history_on_their_own_wires() {
+    async fn all_protocols_keep_unavailable_tools_as_context_on_their_own_wires() {
         let fixtures = [
+            (
+                "openai-chat",
+                "/v1/chat/completions",
+                serde_json::json!({"id":"r","object":"chat.completion","created":1,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"wire reply"},"finish_reason":"stop"}]}),
+            ),
             (
                 "openai-responses",
                 "/v1/responses",
@@ -429,8 +449,18 @@ mod tests {
                     request.starts_with(&format!("POST {route} ")),
                     "wrong route"
                 );
-                for text in ["previous question", "previous answer", "current question"] {
-                    assert!(request.contains(text));
+                for text in [
+                    "previous question",
+                    "previous answer",
+                    "current question",
+                    "lookup",
+                    "observed tool result",
+                ] {
+                    assert!(
+                        request.contains(text),
+                        "{protocol} missing {text}: {}",
+                        request.split("\r\n\r\n").nth(1).unwrap_or_default()
+                    );
                 }
                 let body = body.to_string();
                 write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
@@ -460,18 +490,27 @@ mod tests {
                     &id,
                     "test-model",
                     vec![
-                        Turn {
-                            role: "user".into(),
-                            text: "previous question".into(),
-                        },
-                        Turn {
+                        crate::sessions::Turn::plain("user", "previous question"),
+                        crate::sessions::Turn {
                             role: "assistant".into(),
-                            text: "previous answer".into(),
+                            parts: vec![
+                                crate::sessions::ContentPart::call(crate::transcript::ToolCall {
+                                    call_id: "call_123".into(),
+                                    name: "lookup".into(),
+                                    arguments: serde_json::json!({"id":1}),
+                                }),
+                                crate::sessions::ContentPart::result(
+                                    crate::transcript::ToolResult {
+                                        call_id: "call_123".into(),
+                                        output: serde_json::json!({"value":"observed tool result"}),
+                                        is_error: false,
+                                    },
+                                ),
+                                crate::sessions::ContentPart::text("text", "previous answer"),
+                            ],
+                            replay: serde_json::Map::new(),
                         },
-                        Turn {
-                            role: "user".into(),
-                            text: "current question".into(),
-                        },
+                        crate::sessions::Turn::plain("user", "current question"),
                     ],
                 )
                 .await;
@@ -540,10 +579,7 @@ mod tests {
             .chat(
                 &id,
                 "test-model",
-                vec![Turn {
-                    role: "user".into(),
-                    text: "hello".into(),
-                }],
+                vec![crate::sessions::Turn::plain("user", "hello")],
             )
             .await
             .unwrap();

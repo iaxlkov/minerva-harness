@@ -14,7 +14,7 @@ function setup(ipc) {
 }
 test('result uses backend-owned ID; history adapter never writes assistant',async()=>{
   const calls=[];
-  const ctx=setup(async(cmd,args)=>{calls.push([cmd,args]);return {text:'answer',summary:null};});
+  const ctx=setup(async(cmd,args)=>{calls.push([cmd,args]);return {parts:[{kind:'text',data:{text:'answer'}}]};});
   const result=await ctx.adapter.run(ctx.args);
   assert.equal(result.content[0].text,'answer');
   assert.equal(calls[1][1].request.responseId,'a');
@@ -24,7 +24,7 @@ test('result uses backend-owned ID; history adapter never writes assistant',asyn
 });
 test('failure throws instead of becoming model text; next user skips transient assistant',async()=>{
   const calls=[];
-  const ctx=setup(async(cmd,args)=>{calls.push([cmd,args]);if(cmd==='session_run')throw new Error('offline');});
+  const ctx=setup(async(cmd,args)=>{calls.push([cmd,args]);if(cmd==='session_run')throw new Error('offline');if(cmd==='session_load')return [];});
   await assert.rejects(ctx.adapter.run(ctx.args),/offline/);
   assert.equal(ctx.errors.length,1);
   await ctx.history.append({parentId:'a',message:message('u2','user','again')});
@@ -38,11 +38,12 @@ test('abort requests cancellation of matching backend run and releases UI',async
     calls.push([cmd,args]);
     if(cmd==='session_run')return new Promise((_,reject)=>{rejectRun=reject;started();});
     if(cmd==='session_cancel'){rejectRun(new Error('cancelled'));return true;}
+    if(cmd==='session_load')return [];
   });
   const pending=ctx.adapter.run(ctx.args);
   await ready;ctx.controller.abort();
   await assert.rejects(pending,/cancelled/);
-  assert.equal(calls.at(-1)[1].runId,'a');
+  assert.equal(calls.find(c=>c[0]==='session_cancel')[1].runId,'a');
   assert.deepEqual(ctx.running,[true,false]);
   assert.equal(ctx.errors.length,0);
 });

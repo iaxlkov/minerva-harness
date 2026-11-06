@@ -1,8 +1,9 @@
+import { transcriptContent, type ContentPart } from './transcript.ts';
 import type { ChatModelAdapter } from '@assistant-ui/react';
 import type { SessionHistoryAdapter } from './sessionHistory';
 
 type Invoke = <T>(command: string, args: Record<string, unknown>) => Promise<T>;
-type Reply = { text: string; summary: string | null };
+type Reply = { parts: ContentPart[] };
 
 // IPC belongs here; the Rust command owns execution and durable assistant writes.
 export function chatAdapter(config: {
@@ -47,12 +48,16 @@ export function chatAdapter(config: {
         });
         config.history.completeResponse(runId);
         config.onSaved();
-        return { content: [
-          ...(result.summary ? [{ type: 'reasoning' as const, text: result.summary }] : []),
-          { type: 'text' as const, text: result.text },
-        ] };
+        return { content: transcriptContent(result.parts) };
+
       } catch (error) {
         if (!abortSignal.aborted) config.onError(`Не удалось получить ответ: ${String(error)}`);
+        // A failed request can already have durable tool effects. Recover that
+        // snapshot instead of dropping it or manufacturing an assistant answer.
+        try {
+          const saved=await config.history.recoverResponse(runId);
+          if(saved?.message.role==='assistant')return {content:saved.message.content,status:saved.message.status};
+        } catch(recoveryError) {config.onError(`Не удалось восстановить ход: ${String(recoveryError)}`);}
         throw error;
       } finally {
         settled = true;

@@ -12,12 +12,7 @@ pub struct SessionInfo {
     pub updated_at: i64,
     pub model: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContentPart {
-    pub kind: String,
-    pub data: Value,
-}
+pub use crate::transcript::ContentPart;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
@@ -39,16 +34,37 @@ pub struct IntegrationState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
     pub role: String,
-    pub text: String,
+    pub parts: Vec<ContentPart>,
+    #[serde(default)]
+    pub replay: Map<String, Value>,
+}
+impl Turn {
+    pub fn text(&self) -> String {
+        self.parts
+            .iter()
+            .filter(|p| p.kind == "text")
+            .filter_map(|p| p.data["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    #[cfg(test)]
+    pub fn plain(role: &str, text: &str) -> Self {
+        Self {
+            role: role.into(),
+            parts: vec![ContentPart::text("text", text)],
+            replay: Map::new(),
+        }
+    }
 }
 
+#[derive(Clone)]
 pub struct SessionService {
-    store: SessionStore,
+    store: std::sync::Arc<SessionStore>,
 }
 impl SessionService {
     pub fn open(path: &Path) -> Result<Self, String> {
         Ok(Self {
-            store: SessionStore::open(path)?,
+            store: std::sync::Arc::new(SessionStore::open(path)?),
         })
     }
     pub fn create(&self, id: &str) -> Result<(), String> {
@@ -78,12 +94,16 @@ impl SessionService {
         {
             return Err("Некорректный формат сообщения".into());
         }
-        if message.parts.iter().any(|part| match part.kind.as_str() {
-            "text" | "reasoning" => !part.data.get("text").is_some_and(Value::is_string),
-            "extension" => !part.data.is_object(),
-            _ => true,
-        }) {
-            return Err("Некорректное содержимое сообщения".into());
+        crate::transcript::Transcript {
+            parts: message.parts.clone(),
+            replay: Map::new(),
+        }
+        .validate()?;
+        if message.role != "assistant"
+            && (message.parts.iter().any(|p| p.kind.starts_with("tool-"))
+                || message.extensions.contains_key("replay"))
+        {
+            return Err("Инструменты принадлежат ответу ассистента.".into());
         }
         if state.is_some() && message.role != "assistant" {
             return Err("Состояние интеграции сохраняется вместе с ответом".into());
@@ -136,7 +156,20 @@ impl SessionService {
         message: &SessionMessage,
         integration: Option<&IntegrationState>,
     ) -> Result<(), String> {
+        crate::transcript::Transcript {
+            parts: message.parts.clone(),
+            replay: Map::new(),
+        }
+        .validate_complete()?;
         self.store.save(session, message, None, integration, true)
+    }
+    pub fn checkpoint(&self, session: &str, message: &SessionMessage) -> Result<(), String> {
+        crate::transcript::Transcript {
+            parts: message.parts.clone(),
+            replay: Map::new(),
+        }
+        .validate()?;
+        self.store.checkpoint(session, message)
     }
     pub fn fail_run(
         &self,
@@ -179,26 +212,25 @@ impl SessionService {
                 return Err("Передача сохранённых system-сообщений пока не поддерживается.".into());
             }
             if matches!(item.role.as_str(), "user" | "assistant") {
-                if item
-                    .parts
-                    .iter()
-                    .any(|p| !matches!(p.kind.as_str(), "text" | "reasoning"))
-                {
-                    return Err("Этот диалог содержит вложения или инструменты, которые пока нельзя передать модели.".into());
+                if item.parts.iter().any(|p| {
+                    (item.role == "user" && p.kind == "extension")
+                        || !matches!(
+                            p.kind.as_str(),
+                            "text" | "reasoning" | "tool-call" | "tool-result" | "extension"
+                        )
+                }) {
+                    return Err("Этот тип содержимого пока нельзя передать модели.".into());
                 }
-                let text = item
-                    .parts
-                    .iter()
-                    .filter(|p| p.kind == "text")
-                    .filter_map(|p| p.data.get("text").and_then(Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if item.role == "user" || !text.trim().is_empty() {
-                    chain.push(Turn {
-                        role: item.role.clone(),
-                        text,
-                    });
-                }
+                chain.push(Turn {
+                    role: item.role.clone(),
+                    parts: item.parts.clone(),
+                    replay: item
+                        .extensions
+                        .get("replay")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .unwrap_or_default(),
+                });
             }
         }
         chain.reverse();
@@ -387,7 +419,7 @@ mod tests {
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
     }
     #[test]

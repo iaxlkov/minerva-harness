@@ -14,11 +14,12 @@ import { Settings, type Provider } from './Settings';
 import { CodexModelsContext, type CodexModel, type CodexOptions } from './CodexSettings';
 import { sessionHistory, type SessionInfo } from './sessionHistory';
 import { chatAdapter } from './chatAdapter';
+import { ToolHistory } from './ToolHistory';
 
 
 function Message({ role }: { role: 'user' | 'assistant' }) {
   return <MessagePrimitive.Root className={`message ${role}`} data-role={role}>
-    <div className="message-content"><div className="message-text"><MessagePrimitive.Parts components={{Reasoning:({text})=><details className="message-reasoning"><summary>Сводка рассуждений</summary><div>{text}</div></details>}}/></div></div>
+    <div className="message-content"><div className="message-text"><MessagePrimitive.Parts components={{tools:{Fallback:ToolHistory},data:{Fallback:({data})=><details className="tool-history"><summary>Событие провайдера</summary><pre>{JSON.stringify(data,null,2)}</pre></details>},Reasoning:({text})=><details className="message-reasoning"><summary>Сводка рассуждений</summary><div>{text}</div></details>}}/><AuiIf condition={s=>s.message.status?.type==='incomplete'}><div className="message-interrupted">Ход не завершён. Сохранённые действия показаны выше.</div></AuiIf></div></div>
   </MessagePrimitive.Root>;
 }
 
