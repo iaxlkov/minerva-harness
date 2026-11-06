@@ -5,6 +5,62 @@ use serde_json::{json, Value};
 use std::{convert::Infallible, process::Stdio, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+// GUI apps on macOS may not inherit the terminal PATH. Also look for
+// the CLI bundled with ChatGPT, without reading or copying credentials.
+fn app_server_command() -> Result<tokio::process::Command, String> {
+    let path = resolve_codex(
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+    .ok_or("Не найден Codex. Установите Codex CLI или ChatGPT и перезапустите приложение.")?;
+    Ok(tokio::process::Command::new(path))
+}
+
+fn resolve_codex(
+    path: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    let executable = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let mut candidates: Vec<std::path::PathBuf> = path
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| dir.join(executable))
+        .collect();
+    #[cfg(target_os = "macos")]
+    {
+        let bundled = "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+        candidates.push(std::path::Path::new("/Applications").join(bundled));
+        if let Some(home) = home {
+            candidates.push(
+                std::path::Path::new(home)
+                    .join("Applications")
+                    .join(bundled),
+            );
+            candidates.push(std::path::Path::new(home).join(".cargo/bin/codex"));
+        }
+        candidates.push("/opt/homebrew/bin/codex".into());
+        candidates.push("/usr/local/bin/codex".into());
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = home;
+    candidates.into_iter().find(|candidate| {
+        if !candidate.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            candidate
+                .metadata()
+                .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    })
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginStatus {
@@ -54,7 +110,7 @@ impl CodexService {
         if state.as_ref().is_some_and(|s| s.state == "pending") {
             return Err("Вход уже выполняется в браузере.".into());
         }
-        let mut command = tokio::process::Command::new("codex.exe");
+        let mut command = app_server_command()?;
         command
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
@@ -110,7 +166,19 @@ impl CodexService {
         }
         #[cfg(not(windows))]
         {
-            return Err("Вход через браузер пока доступен только в Windows.".into());
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let status = tokio::process::Command::new(opener)
+                .arg(auth_url)
+                .status()
+                .await
+                .map_err(|e| format!("Не удалось открыть браузер для входа: {e}"))?;
+            if !status.success() {
+                return Err("Не удалось открыть браузер для входа.".into());
+            }
         }
         let pending = LoginStatus {
             state: "pending".into(),
@@ -119,6 +187,8 @@ impl CodexService {
         *state = Some(pending.clone());
         let shared = self.login.clone();
         let task = tokio::spawn(async move {
+            // Keep stdin open while waiting for the browser callback.
+            let _input = input;
             let completed = tokio::time::timeout(Duration::from_secs(300), async {
                 while let Ok(Some(line)) = lines.next_line().await {
                     if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -154,7 +224,7 @@ impl CodexService {
         self.inspect(true).await
     }
     async fn inspect(&self, include_quota: bool) -> Result<CodexStatus, String> {
-        let mut command = tokio::process::Command::new("codex.exe");
+        let mut command = app_server_command()?;
         command
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
@@ -251,7 +321,7 @@ struct Rpc {
 }
 impl Rpc {
     async fn start() -> Result<Self, String> {
-        let mut command = tokio::process::Command::new("codex.exe");
+        let mut command = app_server_command()?;
         command
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
@@ -494,6 +564,34 @@ fn belongs_to_turn(value: &Value, thread: &str, turn: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn discovers_executable_in_path_with_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("cli with spaces");
+        std::fs::create_dir(&bin).unwrap();
+        let executable = bin.join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::write(&executable, "test").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = std::env::join_paths([&bin]).unwrap();
+        assert_eq!(resolve_codex(Some(&path), None), Some(executable));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn discovers_chatgpt_bundle_without_terminal_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "test").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // System installation takes priority if present.
+        let found = resolve_codex(None, Some(dir.path().as_os_str())).unwrap();
+        assert!(found == executable || found.starts_with("/Applications/ChatGPT.app"));
+    }
     #[tokio::test]
     async fn dropping_service_aborts_background_login() {
         let service = CodexService::default();

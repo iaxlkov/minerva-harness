@@ -18,6 +18,15 @@ npm.cmd ci
 .\start-dev.cmd
 ```
 
+На macOS нужны Node.js 24, Rust stable и Xcode Command Line Tools. Запуск:
+
+```sh
+npm ci
+npm run tauri:dev
+```
+
+Интеграция Codex ищет `codex.exe` в Windows и `codex` в macOS/Linux через PATH. На macOS также поддерживается CLI внутри ChatGPT.app (в `/Applications` или `~/Applications`) и стандартные пути Homebrew. Вход в ChatGPT открывается в системном браузере; существующая локальная авторизация Codex используется автоматически.
+
 Tauri собирает Rust, Vite обслуживает интерфейс с HMR на `127.0.0.1:1420`. Порт должен быть свободен; старую экспериментальную копию одновременно не запускайте.
 
 ## Проверки
