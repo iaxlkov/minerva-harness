@@ -32,7 +32,7 @@ An unauthenticated SPA document request redirects to `/auth/login?returnTo=...`;
 
 `GET /api/v1/streams?workspaceId=...` requires exact Origin and membership. Gateway bridges the open/close and baseline/event/resync stream framing. Every opened subscription names a session in the selected worker; unknown frames, unsolicited IDs, mismatched outer/inner session IDs, malformed payloads, noncontiguous or unsafe cursors, and deliveries for closed scopes close the connection. Only session.updated, message.upsert and run.updated events are accepted; resync pauses events until a fresh nonregressing baseline. Membership, session and active assignment are revalidated before each data delivery; an idle timer and revocation notifications also close access. A tab's former connection cannot receive another workspace's events.
 
-`POST /auth/logout` and `/api/v1/logout` require Origin and CSRF, revoke the persistent session and clear all session/CSRF/login cookies. APIs return JSON failures and never redirect to HTML. Hosted `codex_login` is explicitly unavailable; bootstrap does not advertise that capability.
+`POST /auth/logout` and `/api/v1/logout` require Origin and CSRF, revoke the persistent session and clear all session/CSRF/login cookies. APIs return JSON failures and never redirect to HTML. The base application has no Codex endpoints or capabilities.
 
 ## Trusted runner and worker protocol
 

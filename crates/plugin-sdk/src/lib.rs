@@ -1,4 +1,10 @@
 //! Version one wire contracts. Native local plugins are trusted executable code.
+pub mod context;
+pub mod engine;
+pub mod mcp;
+pub mod tools;
+pub mod transcript;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -17,6 +23,8 @@ pub struct Manifest {
     pub description: Option<String>,
     #[serde(default)]
     pub requires: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub provides: BTreeMap<String, u32>,
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
@@ -52,6 +60,20 @@ pub fn relative_entry(entry: &str) -> Result<(), String> {
 }
 impl Manifest {
     pub fn validate(&self) -> Result<(), String> {
+        for (name, version) in self.requires.iter().chain(self.provides.iter()) {
+            if name.is_empty()
+                || name.len() > 100
+                || *version == 0
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+            {
+                return Err("invalid service name or version".into());
+            }
+        }
+        if !self.provides.is_empty() && self.backend.is_none() {
+            return Err("service provider requires a backend".into());
+        }
         if self.api_version != 1 {
             return Err("unsupported plugin apiVersion".into());
         }
@@ -66,8 +88,7 @@ impl Manifest {
         {
             return Err("invalid plugin id".into());
         }
-        if ["example", "shell", "providers", "codex", "plugin-manager"].contains(&self.id.as_str())
-        {
+        if ["example", "shell", "providers", "plugin-manager"].contains(&self.id.as_str()) {
             return Err("plugin id is reserved for a builtin".into());
         }
         if self.version.is_empty() || self.version.len() > 100 {
@@ -81,7 +102,7 @@ impl Manifest {
         }
         if let Some(u) = &self.ui {
             relative_entry(&u.entry)?;
-            if u.sdk_version != 1 {
+            if u.sdk_version != 2 {
                 return Err("unsupported UI SDK".into());
             }
         }

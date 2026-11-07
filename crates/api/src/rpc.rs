@@ -64,6 +64,11 @@ struct Toggle {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct OptionalPlugins {
+    enabled: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Settings {
     settings: ShellSettings,
 }
@@ -172,6 +177,29 @@ pub(crate) async fn dispatch(
     params: Value,
 ) -> Result<Value, DispatchError> {
     match method {
+        "workspace.get"
+        | "workspace.save"
+        | "tools.list"
+        | "interactions.list"
+        | "interactions.answer"
+        | "context.status"
+        | "context.compact"
+        | "attachments.put"
+        | "attachments.get"
+        | "mcp.list"
+        | "mcp.save"
+        | "mcp.delete" => runtime
+            .harness_call(method, params)
+            .await
+            .map_err(Into::into),
+        "plugins.models" => {
+            let _: Empty = args(params)?;
+            encoded(runtime.plugins.models().await?)
+        }
+        "plugins.ui" => {
+            let a: Id = args(params)?;
+            encoded(runtime.plugins.ui_document(&a.id).await?)
+        }
         "plugins.call" => {
             let a: PluginCall = args(params)?;
             Ok(runtime
@@ -256,26 +284,6 @@ pub(crate) async fn dispatch(
             let a: Id = args(params)?;
             encoded(runtime.plugins.providers()?.delete(&a.id).await?)
         }
-        "codex_models" => {
-            let _: Empty = args(params)?;
-            encoded(runtime.plugins.codex()?.models().await?)
-        }
-        "codex_status" => {
-            let _: Empty = args(params)?;
-            encoded(runtime.plugins.codex()?.status().await?)
-        }
-        "codex_quota" => {
-            let _: Empty = args(params)?;
-            encoded(runtime.plugins.codex()?.quota().await?)
-        }
-        "codex_login" => {
-            let _: Empty = args(params)?;
-            encoded(runtime.plugins.codex()?.login().await?)
-        }
-        "codex_login_status" => {
-            let _: Empty = args(params)?;
-            encoded(runtime.plugins.codex()?.login_status().await)
-        }
         "list_plugins" => {
             let _: Empty = args(params)?;
             encoded(runtime.plugins.list().await?)
@@ -283,6 +291,10 @@ pub(crate) async fn dispatch(
         "set_plugin_enabled" => {
             let a: Toggle = args(params)?;
             encoded(runtime.plugins.set_enabled(&a.id, a.enabled).await?)
+        }
+        "set_optional_plugins_enabled" => {
+            let a: OptionalPlugins = args(params)?;
+            encoded(runtime.plugins.set_optional_enabled(a.enabled).await?)
         }
         "shell_settings" => {
             let _: Empty = args(params)?;

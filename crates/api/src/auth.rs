@@ -214,7 +214,7 @@ pub(crate) async fn bootstrap(State(state): State<ApiState>, headers: HeaderMap)
         Ok(s) => s,
         Err(r) => return *r,
     };
-    Json(json!({"protocolVersion":1,"csrfToken":session.csrf,"principal":{"id":"local"},"workspace":{"id":state.runtime.config().workspace_id},"capabilities":["sessions","runs","providers","plugins","shell","codex.login"]})).into_response()
+    Json(json!({"protocolVersion":1,"csrfToken":session.csrf,"principal":{"id":"local"},"workspace":{"id":state.runtime.config().workspace_id},"capabilities":["sessions","runs","providers","plugins","shell"]})).into_response()
 }
 pub(crate) async fn logout(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     if let Err(r) = authorize(&state, &headers, true) {

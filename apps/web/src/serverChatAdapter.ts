@@ -31,10 +31,12 @@ export function serverChatAdapter(config:ChatAdapterConfig):ChatModelAdapter {
       const last=messages.at(-1);
       if(!last||last.role!=='user')throw Error('Нужно сообщение пользователя.');
       const text=last.content.filter(part=>part.type==='text').map(part=>part.text).join('\n');
-      if(!text.trim())throw Error('Нужно непустое сообщение пользователя.');
+      const attachments=[...last.content,...(last.attachments??[]).flatMap(item=>item.content)].flatMap(part=>{if(part.type!=='image')return [];const ref=(part.providerMetadata?.minerva as {attachment?:import('../../../packages/client/src/types.ts').AttachmentRef}|undefined)?.attachment;return ref?[ref]:[];});
+      if(attachments.length>8||attachments.reduce((sum,ref)=>sum+ref.bytes,0)>20*1024*1024)throw Error('Прикрепите до 8 изображений общим размером до 20 МиБ.');
+      if(!text.trim()&&!attachments.length)throw Error('Нужно непустое сообщение пользователя.');
       config.history.beginResponse(runId,last.id);
       abortSignal.addEventListener('abort',onAbort,{once:true});
-      const request={sessionId:config.sessionId,requestId:runId,parentId:config.history.resolveParent(messages.at(-2)?.id??null),message:{id:last.id,text},model:config.model,options:config.options};
+      const request={sessionId:config.sessionId,requestId:runId,parentId:config.history.resolveParent(messages.at(-2)?.id??null),message:{id:last.id,text},model:config.model,options:attachments.length?{...config.options,attachments}:config.options};
       const startDeadline=Date.now()+30000;
       while(true){
         try{await config.invoke('runs.start',request);break;}

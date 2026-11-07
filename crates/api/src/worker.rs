@@ -40,7 +40,7 @@ pub fn worker_router(runtime: Arc<Runtime>, config: WorkerApiConfig) -> Result<R
         .route("/api/v1/rpc", post(invoke))
         .route("/api/v1/streams", get(follow))
         .route("/health/ready", get(ready))
-        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .with_state(WorkerState {
             runtime,
             config,
@@ -145,7 +145,7 @@ async fn invoke(State(state): State<WorkerState>, headers: HeaderMap, body: Byte
             "Unsupported protocol version",
         );
     }
-    if input.method == "run_shell_command" || input.method.starts_with("codex_") {
+    if input.method == "run_shell_command" {
         return failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "capability/unavailable",

@@ -4,11 +4,12 @@ use crate::{
     transcript::{ToolCall, ToolResult, Transcript, TranscriptSink},
 };
 use rig_agent::agent::hook::{
-    AgentHook, HookContext, ModelTurnAction, ModelTurnFinished, OutcomeAction, OutcomeEvent,
+    AgentHook, HookContext, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
+    OutcomeEvent, ReasoningDelta, TextDelta,
 };
 use rig_core::message::{AssistantContent, AssistantMessage, Message, UserContent};
 use serde_json::json;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub fn capture(messages: &[Message]) -> Result<Transcript, String> {
     let mut transcript = Transcript::default();
@@ -77,7 +78,7 @@ pub fn replay(turns: &[Turn]) -> Result<Vec<Message>, String> {
             continue;
         }
         if turn.role == "user" {
-            messages.push(Message::user(turn.text()));
+            messages.push(user_message(turn)?);
             continue;
         }
         let mut assistant = Vec::new();
@@ -139,6 +140,40 @@ pub fn replay(turns: &[Turn]) -> Result<Vec<Message>, String> {
         }
     }
     close_pending(messages)
+}
+
+pub fn user_message(turn: &Turn) -> Result<Message, String> {
+    use rig_core::message::{DocumentSourceKind, Image, ImageMediaType};
+    let mut content = Vec::new();
+    for part in &turn.parts {
+        match part.kind.as_str() {
+            "text" => content.push(UserContent::text(
+                part.data["text"].as_str().unwrap_or_default(),
+            )),
+            "image" => {
+                let mime = part.data["mimeType"]
+                    .as_str()
+                    .ok_or("Image MIME type missing")?;
+                let media_type = match mime {
+                    "image/png" => ImageMediaType::PNG,
+                    "image/jpeg" => ImageMediaType::JPEG,
+                    "image/gif" => ImageMediaType::GIF,
+                    "image/webp" => ImageMediaType::WEBP,
+                    _ => return Err("Unsupported image MIME type".into()),
+                };
+                let data = part.data["data"]
+                    .as_str()
+                    .ok_or("Image bytes must be hydrated before provider call")?;
+                content.push(UserContent::Image(Image {
+                    data: DocumentSourceKind::Base64(data.into()),
+                    media_type: Some(media_type),
+                    ..Default::default()
+                }));
+            }
+            _ => return Err("Unsupported user content for provider".into()),
+        }
+    }
+    Ok(Message::User { content })
 }
 
 fn close_pending(messages: Vec<Message>) -> Result<Vec<Message>, String> {
@@ -204,35 +239,139 @@ fn push_message(out: &mut Vec<Message>, message: Message) {
     out.push(message);
 }
 
-pub struct HistoryHook {
-    messages: Mutex<Vec<Message>>,
-    sink: TranscriptSink,
-    model_message: Mutex<Option<AssistantMessage>>,
+#[derive(Default)]
+struct HistoryState {
+    messages: Vec<Message>,
+    model_message: Option<AssistantMessage>,
+    active: Vec<ContentPart>,
+    reasoning_parts: std::collections::HashMap<usize, usize>,
+    tool_states: std::collections::HashMap<String, serde_json::Value>,
+    usage: Vec<serde_json::Value>,
 }
+
+#[derive(Clone)]
+pub struct HistoryHook {
+    state: Arc<Mutex<HistoryState>>,
+    sink: TranscriptSink,
+}
+
 impl HistoryHook {
     pub fn new(sink: TranscriptSink) -> Self {
         Self {
-            messages: Mutex::new(Vec::new()),
+            state: Arc::new(Mutex::new(HistoryState::default())),
             sink,
-            model_message: Mutex::new(None),
         }
+    }
+    pub fn finish(&self, messages: &[Message]) -> Result<Transcript, String> {
+        let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        state.messages = messages.to_vec();
+        state.active.clear();
+        state.reasoning_parts.clear();
+        self.publish(&state)?;
+        self.snapshot(&state)
+    }
+    fn snapshot(&self, state: &HistoryState) -> Result<Transcript, String> {
+        let mut transcript = capture(&state.messages)?;
+        if !state.usage.is_empty() {
+            transcript.replay.insert("usage".into(), json!(state.usage));
+        }
+        for part in &mut transcript.parts {
+            if let Some(metadata) = part.data["callId"]
+                .as_str()
+                .and_then(|call| state.tool_states.get(call))
+            {
+                if let (Some(target), Some(extra)) =
+                    (part.data.as_object_mut(), metadata.as_object())
+                {
+                    target.extend(
+                        extra
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone())),
+                    );
+                }
+            }
+        }
+        Ok(transcript)
+    }
+    fn publish(&self, state: &HistoryState) -> Result<(), String> {
+        let mut native = state.messages.clone();
+        let active_text = state
+            .active
+            .iter()
+            .filter(|p| p.kind == "text")
+            .filter_map(|p| p.data["text"].as_str())
+            .map(AssistantContent::text)
+            .collect::<Vec<_>>();
+        if !active_text.is_empty() {
+            native.push(Message::Assistant(AssistantMessage::new(active_text)));
+        }
+        let mut transcript = self.snapshot(state)?;
+        transcript.parts.extend(state.active.clone());
+        transcript.replay.insert("rig-v1".into(), json!(native));
+        (self.sink)(&transcript)
+    }
+    fn fragment(&self, kind: &str, part: Option<usize>, delta: &str) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        let index = if let Some(part) = part {
+            if let Some(index) = state.reasoning_parts.get(&part) {
+                *index
+            } else {
+                let index = state.active.len();
+                state.active.push(ContentPart::text(kind, ""));
+                state.reasoning_parts.insert(part, index);
+                index
+            }
+        } else if state.active.last().is_some_and(|p| p.kind == kind) {
+            state.active.len() - 1
+        } else {
+            state.active.push(ContentPart::text(kind, ""));
+            state.active.len() - 1
+        };
+        let mut text = state.active[index].data["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        text.push_str(delta);
+        state.active[index].data["text"] = json!(text);
+        self.publish(&state)
     }
 }
 impl AgentHook for HistoryHook {
+    async fn on_text_delta(&self, _: &HookContext, event: TextDelta<'_>) -> ObservationAction {
+        match self.fragment("text", None, event.delta) {
+            Ok(()) => ObservationAction::Continue,
+            Err(error) => ObservationAction::Stop(error),
+        }
+    }
+    async fn on_reasoning_delta(
+        &self,
+        _: &HookContext,
+        event: ReasoningDelta<'_>,
+    ) -> ObservationAction {
+        match self.fragment("reasoning", Some(event.part.index()), event.delta) {
+            Ok(()) => ObservationAction::Continue,
+            Err(error) => ObservationAction::Stop(error),
+        }
+    }
     async fn on_model_turn_finished(
         &self,
         _: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
         let save = || -> Result<(), String> {
-            let mut messages = self.messages.lock().map_err(|e| e.to_string())?;
-            let native = self.model_message.lock().map_err(|e| e.to_string())?.take();
-            messages.push(Message::Assistant(
+            let mut state = self.state.lock().map_err(|e| e.to_string())?;
+            let native = state.model_message.take();
+            state.messages.push(Message::Assistant(
                 native
                     .unwrap_or_default()
                     .with_content(event.content.clone()),
             ));
-            (self.sink)(&capture(&messages)?)
+            state.active.clear();
+            state.reasoning_parts.clear();
+            state
+                .usage
+                .push(serde_json::to_value(event.usage).map_err(|e| e.to_string())?);
+            self.publish(&state)
         };
         match save() {
             Ok(()) => ModelTurnAction::Continue,
@@ -241,9 +380,9 @@ impl AgentHook for HistoryHook {
     }
     async fn on_outcome(&self, _: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
         if let Some(response) = event.completion() {
-            match self.model_message.lock() {
-                Ok(mut slot) => {
-                    *slot = match response.message() {
+            match self.state.lock() {
+                Ok(mut state) => {
+                    state.model_message = match response.message() {
                         Some(Message::Assistant(a)) => Some(a),
                         _ => None,
                     }
@@ -255,8 +394,9 @@ impl AgentHook for HistoryHook {
             return OutcomeAction::Proceed;
         };
         let save = || -> Result<(), String> {
-            let mut messages = self.messages.lock().map_err(|e| e.to_string())?;
-            let call = messages
+            let mut state = self.state.lock().map_err(|e| e.to_string())?;
+            let call = state
+                .messages
                 .iter()
                 .rev()
                 .filter_map(|m| {
@@ -278,14 +418,184 @@ impl AgentHook for HistoryHook {
                 answer.is_error = true;
                 answer
             };
-            messages.push(Message::User {
-                content: vec![UserContent::ToolResult(answer)],
+            let existing = state.messages.iter_mut().find_map(|message| match message {
+                Message::User { content } => content.iter_mut().find(|part| matches!(part, UserContent::ToolResult(result) if result.call == answer.call)),
+                _ => None,
             });
-            (self.sink)(&capture(&messages)?)
+            if let Some(existing) = existing {
+                *existing = UserContent::ToolResult(answer);
+            } else {
+                state.messages.push(Message::User {
+                    content: vec![UserContent::ToolResult(answer)],
+                });
+            }
+            self.publish(&state)
         };
         match save() {
             Ok(()) => OutcomeAction::Proceed,
             Err(e) => OutcomeAction::stop(e),
         }
+    }
+}
+
+impl crate::tools::ToolEventSink for HistoryHook {
+    fn emit(
+        &self,
+        context: &crate::tools::ToolContext,
+        _: &str,
+        _: &serde_json::Value,
+        status: &str,
+        result: Option<&Result<serde_json::Value, String>>,
+    ) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        let mut metadata = json!({"status":status});
+        if let Some(result) = result {
+            metadata["meta"] = match result {
+                Ok(output) => output.clone(),
+                Err(error) => json!({"error":error}),
+            };
+        }
+        if let Some(result) =
+            result.filter(|_| matches!(status, "completed" | "failed" | "cancelled"))
+        {
+            let call = state
+                .messages
+                .iter()
+                .rev()
+                .filter_map(|m| match m {
+                    Message::Assistant(a) => Some(a),
+                    _ => None,
+                })
+                .flat_map(|a| a.tool_calls())
+                .find(|c| c.id.to_string() == context.call_id)
+                .cloned();
+            if let Some(call) = call {
+                // Persist real host results before Rig commits its batch; sibling cancellation may stop it.
+                let mut answer = match result {
+                    Ok(value) => call.result(vec![rig_core::message::ToolResultContent::Json {
+                        value: value.clone(),
+                    }]),
+                    Err(error) => {
+                        call.result(vec![rig_core::message::ToolResultContent::text(error)])
+                    }
+                };
+                answer.is_error = result.is_err();
+                state.messages.push(Message::User {
+                    content: vec![UserContent::ToolResult(answer)],
+                });
+            }
+        }
+        state.tool_states.insert(context.call_id.clone(), metadata);
+        self.publish(&state)
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    #[test]
+    fn running_tool_progress_is_metadata_until_terminal_result() {
+        use crate::tools::{ToolContext, ToolEventSink};
+        use rig_core::message::{ProviderCallId, ToolFunction, ToolName};
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let observed = saved.clone();
+        let hook = HistoryHook::new(Arc::new(move |t| {
+            observed.lock().unwrap().push(t.clone());
+            Ok(())
+        }));
+        let call = rig_core::message::ToolCall::new(
+            ProviderCallId::new("shell-call").unwrap().into(),
+            ToolFunction::new(ToolName::new("shell").unwrap(), json!({})),
+        );
+        hook.state
+            .lock()
+            .unwrap()
+            .messages
+            .push(Message::Assistant(AssistantMessage::new(vec![
+                AssistantContent::ToolCall(call),
+            ])));
+        let context = ToolContext {
+            session_id: "session".into(),
+            run_id: "run".into(),
+            call_id: "shell-call".into(),
+            cwd: None,
+            policy: crate::tools::PermissionPolicy::ReadOnly,
+            cancellation: Default::default(),
+            interactions: Arc::new(crate::tools::InteractionBroker::default()),
+            sink: None,
+        };
+        hook.emit(
+            &context,
+            "shell",
+            &json!({}),
+            "running",
+            Some(&Ok(json!({"stdout":"partial"}))),
+        )
+        .unwrap();
+        let running = saved.lock().unwrap().last().unwrap().clone();
+        assert_eq!(running.parts[0].data["status"], "running");
+        assert!(!running.parts.iter().any(|p| p.kind == "tool-result"));
+        assert!(!running.replay["rig-v1"].to_string().contains("toolresult"));
+        hook.emit(
+            &context,
+            "shell",
+            &json!({}),
+            "completed",
+            Some(&Ok(json!({"stdout":"complete"}))),
+        )
+        .unwrap();
+        let terminal = saved.lock().unwrap().last().unwrap().clone();
+        assert_eq!(
+            terminal
+                .parts
+                .iter()
+                .filter(|p| p.kind == "tool-result")
+                .count(),
+            1
+        );
+        let replay: Vec<Message> =
+            serde_json::from_value(terminal.replay["rig-v1"].clone()).unwrap();
+        assert_eq!(
+            replay
+                .iter()
+                .filter_map(|m| match m {
+                    Message::User { content } => Some(content),
+                    _ => None,
+                })
+                .flatten()
+                .filter(|c| matches!(c, UserContent::ToolResult(_)))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn streaming_snapshots_preserve_order_and_recover_visible_text() {
+        let saved = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let observed = saved.clone();
+        let hook = HistoryHook::new(std::sync::Arc::new(move |t| {
+            observed.lock().unwrap().push(t.clone());
+            Ok(())
+        }));
+        hook.fragment("reasoning", Some(0), "inspect").unwrap();
+        hook.fragment("text", None, "Hello").unwrap();
+        hook.fragment("text", None, " world").unwrap();
+        hook.fragment("reasoning", Some(2), "check").unwrap();
+        hook.fragment("text", None, " done").unwrap();
+        let snapshots = saved.lock().unwrap();
+        assert_eq!(snapshots.len(), 5);
+        let last = snapshots.last().unwrap();
+        assert_eq!(
+            last.parts
+                .iter()
+                .map(|p| p.kind.as_str())
+                .collect::<Vec<_>>(),
+            ["reasoning", "text", "reasoning", "text"]
+        );
+        assert_eq!(last.parts[1].data["text"], "Hello world");
+        let replay: Vec<Message> = serde_json::from_value(last.replay["rig-v1"].clone()).unwrap();
+        assert!(
+            !replay.is_empty(),
+            "interrupted streamed text must remain model context"
+        );
     }
 }

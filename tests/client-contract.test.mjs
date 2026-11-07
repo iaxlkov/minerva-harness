@@ -24,6 +24,30 @@ test('unknown methods cannot reach an injected transport',async()=>{
  let reached=false;const client=createClient(async()=>{reached=true;});
  await assert.rejects(client.call('unknown',{}),e=>e.code==='unknown_method');assert.equal(reached,false);
 });
+
+test('optional plugin switch preserves its boolean through HTTP and Tauri transports',async()=>{
+ const roster=[{id:'plugin-manager',enabled:true,optionalEnabled:false,requestedEnabled:true}];
+ const native=[];
+ const desktop=createTauriClient(async(...args)=>{native.push(args);return roster;});
+ assert.deepEqual(await desktop.call('set_optional_plugins_enabled',{enabled:false}),roster);
+ assert.deepEqual(native,[['set_optional_plugins_enabled',{enabled:false}]]);
+ let request;
+ const http=await createHttpClient({fetch:async(url,init)=>{
+  if(url.endsWith('bootstrap'))return Response.json({protocolVersion:1,csrfToken:'token',principal:{id:'p'},workspace:{id:'w'},capabilities:[]});
+  request=JSON.parse(init.body);return Response.json({ok:true,value:roster});
+ }});
+ assert.deepEqual(await http.call('set_optional_plugins_enabled',{enabled:false}),roster);
+ assert.equal(request.method,'set_optional_plugins_enabled');
+ assert.deepEqual(request.params,{enabled:false});
+});
+
+test('removed Codex endpoints cannot reach the transport',async()=>{
+ let calls=0;const client=createClient(async()=>{calls++;});
+ for(const method of ['codex_models','codex_status','codex_quota','codex_login','codex_login_status']){
+  await assert.rejects(client.call(method,{}),e=>e.code==='unknown_method');
+ }
+ assert.equal(calls,0);
+});
 test('malformed success envelope fails closed',async()=>{
  const client=await createHttpClient({fetch:async url=>Response.json(url.endsWith('bootstrap')?{protocolVersion:1,csrfToken:'x',principal:{id:'p'},workspace:{id:'w'},capabilities:[]}:{ok:true})});
  await assert.rejects(client.call('session_list',{}),e=>e.code==='invalid_response');

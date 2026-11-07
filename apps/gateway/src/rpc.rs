@@ -95,7 +95,7 @@ pub async fn handle(State(state): State<GatewayState>, request: Request) -> Resp
     let Some(workspace) = workspace_header(&parts.headers) else {
         return failure(StatusCode::NOT_FOUND, "resource/not-found");
     };
-    let Ok(body) = to_bytes(body, 1024 * 1024).await else {
+    let Ok(body) = to_bytes(body, 16 * 1024 * 1024).await else {
         return failure(StatusCode::PAYLOAD_TOO_LARGE, "request/too-large");
     };
     let (request, action) = match parse_rpc(&body) {
@@ -119,12 +119,6 @@ pub async fn handle(State(state): State<GatewayState>, request: Request) -> Resp
             return r;
         }
     };
-    if request.method == "codex_login" {
-        return failure(
-            StatusCode::NOT_IMPLEMENTED,
-            "codex/hosted-login-unavailable",
-        );
-    }
     let assignment = match state.directory.resolve(grant.resource()).await {
         Ok(a) => a,
         Err(_) => return failure(StatusCode::SERVICE_UNAVAILABLE, "worker/unavailable"),
@@ -175,7 +169,12 @@ pub async fn handle(State(state): State<GatewayState>, request: Request) -> Resp
             },
         );
     }
-    let bytes = match crate::bounded_body(response, 4 * 1024 * 1024).await {
+    let response_limit = if request.method == "attachments.get" {
+        16 * 1024 * 1024
+    } else {
+        4 * 1024 * 1024
+    };
+    let bytes = match crate::bounded_body(response, response_limit).await {
         Ok(b) => b,
         Err(_) => return failure(StatusCode::BAD_GATEWAY, "worker/invalid-response"),
     };
@@ -193,19 +192,21 @@ pub async fn handle(State(state): State<GatewayState>, request: Request) -> Resp
     {
         return failure(StatusCode::SERVICE_UNAVAILABLE, "worker/unavailable");
     }
-    if request.method == "set_plugin_enabled"
-        && state
-            .control
-            .lock()
-            .await
-            .audit(&AuditEvent::new(
-                AuditKind::PluginActivated,
-                Some(p.user_id()),
-                Some(workspace),
-                serde_json::json!({"action":"plugins.activate"}),
-            ))
-            .await
-            .is_err()
+    if matches!(
+        request.method.as_str(),
+        "set_plugin_enabled" | "set_optional_plugins_enabled"
+    ) && state
+        .control
+        .lock()
+        .await
+        .audit(&AuditEvent::new(
+            AuditKind::PluginActivated,
+            Some(p.user_id()),
+            Some(workspace),
+            serde_json::json!({"action":"plugins.activate"}),
+        ))
+        .await
+        .is_err()
     {
         return failure(StatusCode::SERVICE_UNAVAILABLE, "control/unavailable");
     }

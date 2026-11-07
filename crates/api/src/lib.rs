@@ -57,7 +57,7 @@ pub fn local_router(runtime: Arc<Runtime>, config: LocalApiConfig) -> Router {
                 .fallback(get(spa_fallback).with_state(state.clone())),
         );
     public
-        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), request_guard))
         .with_state(state)
 }
@@ -105,7 +105,8 @@ async fn request_guard(State(state): State<ApiState>, request: Request, next: Ne
         HeaderValue::from_static("nosniff"),
     );
     headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
-    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"));
+    // Verified local plugin modules are imported from Blob URLs; eval remains forbidden.
+    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"));
     response
 }
 

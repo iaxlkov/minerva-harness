@@ -4,10 +4,13 @@ type TauriTransport=(command:string,params:Record<string,unknown>)=>Promise<unkn
 export function createTauriClient(transport:TauriTransport=invoke){
  return createClient(async(method,params)=>{
   try{
+   if(['workspace.get','workspace.save','tools.list','interactions.list','interactions.answer','context.status','context.compact','attachments.put','attachments.get','mcp.list','mcp.save','mcp.delete'].includes(method))return await transport('harness_rpc',{method,params});
    if(method==='runs.start')return await transport('run_start',{request:params});
    if(method==='runs.get')return await transport('run_get',params);
    if(method==='runs.cancel')return await transport('run_cancel',params);
    if(method==='plugins.call')return await transport('plugin_call',params);
+   if(method==='plugins.models')return await transport('plugin_models',params);
+   if(method==='plugins.ui')return await transport('plugin_ui',params);
    return await transport(method,params);
   }catch(error){
    if(error instanceof MinervaError)throw error;

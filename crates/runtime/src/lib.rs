@@ -1,8 +1,7 @@
-pub mod codex;
-pub mod codex_history;
 pub mod config;
 pub mod conversation;
 pub mod credential_store;
+pub mod engine;
 pub mod events;
 pub mod network_policy;
 pub mod plugins;
@@ -11,9 +10,14 @@ pub mod rig_history;
 pub mod run_supervisor;
 pub mod runs;
 pub use run_supervisor::{RunHandle, RunMessage, RunSnapshot, StartRunRequest};
+pub mod context;
+pub mod harness;
+mod harness_api;
+pub mod mcp;
 pub mod session_store;
 pub mod sessions;
 pub mod shell;
+pub mod tools;
 pub mod transcript;
 pub use config::RuntimeConfig;
 use plugins::PluginManager;
@@ -74,7 +78,7 @@ impl Runtime {
                 .map_err(RuntimeError::Database)?,
         );
         let plugins = Arc::new(
-            PluginManager::start_scoped(
+            PluginManager::start_scoped_at(
                 config.config_dir.join("shell.json"),
                 matches!(config.profile.as_str(), "local" | "desktop"),
                 credential_store::CredentialScope::new(
@@ -82,6 +86,7 @@ impl Runtime {
                         .map_err(|e| RuntimeError::Configuration(e.to_string()))?,
                 )
                 .map_err(RuntimeError::Configuration)?,
+                config.data_dir.join("context.sqlite3"),
             )
             .await
             .map_err(RuntimeError::Bootstrap)?,

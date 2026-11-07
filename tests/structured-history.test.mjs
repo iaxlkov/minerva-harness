@@ -1,8 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { transcriptContent } from '../apps/web/src/transcript.ts';
-import { sessionHistory } from '../apps/web/src/sessionHistory.ts';
+import { sessionHistory, decodeSessionMessage } from '../apps/web/src/sessionHistory.ts';
 import { chatAdapter } from '../apps/web/src/chatAdapter.ts';
+import { toolState, toolCard } from '../apps/web/src/execution/toolModel.ts';
+
+test('recovered interrupted runs cannot retain nonterminal tool states',()=>{
+ for(const recorded of ['pending','running','requires-approval']){
+  assert.equal(toolState({providerMetadata:{minerva:{status:recorded}},status:{type:'incomplete',reason:'error'}}).status,'interrupted');
+  assert.equal(toolState({providerMetadata:{minerva:{status:recorded}},status:{type:'incomplete',reason:'cancelled'}}).status,'cancelled');
+ }
+ assert.equal(toolState({providerMetadata:{minerva:{status:'completed'}},result:{output:1},status:{type:'incomplete',reason:'error'}}).status,'completed');
+});
+
+test('tool state never infers interruption from a pending result',()=>{
+  assert.equal(toolState({}).status,'pending');
+  assert.equal(toolState({status:{type:'running'}}).status,'running');
+  for(const status of ['pending','running','requires-approval','completed','failed','cancelled']){
+    assert.equal(toolState({providerMetadata:{minerva:{status}}}).status,status);
+  }
+  assert.equal(toolState({result:{output:null}}).status,'completed');
+  assert.equal(toolState({result:{output:'offline'},isError:true}).status,'failed');
+});
+test('tool cards use recorded structured results and unknown tools keep their raw output',()=>{
+  assert.equal(toolCard('read_file',{path:'a.txt'},{content:'hello'}).kind,'read');
+  assert.equal(toolCard('search',{pattern:'needle'},{matches:[]}).kind,'search');
+  assert.equal(toolCard('apply_patch',{path:'a.txt'},{diff:'-old\n+new'}).kind,'diff');
+  assert.equal(toolCard('shell',{command:'echo yes'},{stdout:'yes',stderr:'',exitCode:0}).kind,'shell');
+  assert.equal(toolCard('unknown',{},null).kind,'generic');
+});
+
+test('native Rig JSON tool results populate specialized cards without changing their saved output',()=>{
+ const output=[{type:'json',value:{path:'fixture.txt',content:'actual file'}}];
+ const before=JSON.stringify(output),card=toolCard('read_file',{path:'fixture.txt'},output);
+ assert.equal(card.result.content,'actual file');assert.equal(card.output,output);assert.equal(JSON.stringify(output),before);
+ assert.equal(toolCard('patch_file',{},[{type:'json',value:{diff:'-old\n+new'}}]).result.diff,'-old\n+new');
+ const multiple=[...output,{type:'text',text:'extra diagnostics'}];assert.equal(toolCard('unknown',{},multiple).output,multiple);
+});
+test('images project validated raster data and preserve durable references without accepting URLs',()=>{
+  const ref={id:'image-1',name:'diagram.png',mimeType:'image/png',bytes:3};
+  const [image]=transcriptContent([{kind:'image',data:{...ref,data:'YWJj',url:'https://untrusted.test/image'}}]);
+  assert.equal(image.type,'image');assert.equal(image.image,'data:image/png;base64,YWJj');
+  assert.deepEqual(image.providerMetadata.minerva.attachment,ref);
+  assert.equal(transcriptContent([{kind:'image',data:ref}])[0].image,'');
+  assert.throws(()=>transcriptContent([{kind:'image',data:{...ref,mimeType:'image/svg+xml',data:'bad'}}]),/изображение/);
+});
 test('neutral extension scalars stay read-only data and malformed tool identities are rejected',()=>{
  assert.deepEqual(transcriptContent([{kind:'extension',data:null}]),[{type:'data',name:'provider-item',data:null}]);
  assert.throws(()=>transcriptContent([{kind:'tool-call',data:null}]),/вызов инструмента/);
@@ -17,6 +59,25 @@ const parts=[
   {kind:'text',data:{text:'Готово.'}},
 ];
 const saved={id:'a',parentId:'u',role:'assistant',createdAt:'2026-11-06T12:00:00Z',parts,extensions:{execution:{status:'completed'}}};
+test('live pending tools keep lifecycle and native metadata without an invented result',()=>{
+  const [call]=transcriptContent([{kind:'tool-call',data:{callId:'pending',name:'shell',arguments:{},status:'pending',meta:{native:{signature:'opaque'}}}}]);
+  assert.equal(call.providerMetadata.minerva.status,'pending');
+  assert.deepEqual(call.providerMetadata.minerva.meta,{native:{signature:'opaque'}});
+  assert.equal(call.result,undefined);
+});
+test('result pairing preserves explicit terminal status and separate call/result metadata',()=>{
+  const content=transcriptContent([
+    {kind:'tool-call',data:{callId:'a',name:'shell',arguments:{},status:'failed',meta:{native:'signature'}}},
+    {kind:'tool-result',data:{callId:'a',output:null,isError:false,meta:{exitCode:1}}},
+  ]);
+  assert.deepEqual(content[0].providerMetadata.minerva,{status:'failed',meta:{native:'signature'},resultMeta:{exitCode:1}});
+});
+test('recovered running execution stays running, terminal errors and cancellation stay distinct',()=>{
+  for(const [state,type,reason] of [['running','running',undefined],['completed','complete','stop'],['failed','incomplete','error'],['cancelled','incomplete','cancelled']]){
+    const message=decodeSessionMessage({...saved,extensions:{execution:{status:state}}}).message;
+    assert.equal(message.status.type,type);assert.equal(message.status.reason,reason);
+  }
+});
 test('parallel results join by call ID, preserving JSON null and error flags',()=>{
   const content=transcriptContent(parts);
   assert.equal(content.length,4);

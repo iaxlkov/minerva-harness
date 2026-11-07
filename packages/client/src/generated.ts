@@ -19,12 +19,27 @@ export type SessionRunResult = { parts: Array<ContentPart>, };
 export type ProviderConfig = { id: string, name: string, baseUrl: string, models: Array<string>, protocol: string, };
 export type ProviderView = { hasKey: boolean, id: string, name: string, baseUrl: string, models: Array<string>, protocol: string, };
 export type ProviderInput = { id: string, name: string, baseUrl: string, models: Array<string>, apiKey: string | null, isNew: boolean, protocol: string, };
-export type LoginStatus = { state: string, message: string, };
-export type QuotaWindow = { usedPercent: number, windowDurationMins: number | null, resetsAt: number | null, };
-export type CodexStatus = { connected: boolean, accountType: string | null, email: string | null, message: string, quota: Array<QuotaWindow> | null, quotaError: string | null, };
-export type CodexModel = { id: string, name: string, isDefault: boolean, reasoningEfforts: Array<string>, defaultReasoningEffort: string | null, };
-export type CodexReply = { threadId: string, text: string, summary: string, };
-export type CodexOptions = { effort: string | null, summary: string | null, verbosity: string | null, };
-export type PluginInfo = { id: string, name: string, description: string, enabled: boolean, canToggle: boolean, origin: string, };
+export type PluginInfo = { id: string, name: string, description: string, enabled: boolean, requestedEnabled: boolean, optionalEnabled: boolean, canToggle: boolean, origin: string, hasUi: boolean, error: string | null, };
+export type PluginModel = { id: string, name: string, group: string, isDefault: boolean, };
 export type ShellSettings = { timeoutMs: number, maxOutputBytes: number, };
 export type ShellResult = { exitCode: number | null, timedOut: boolean, stdout: string, stderr: string, stdoutFile: string | null, stderrFile: string | null, };
+export type WorkspaceSettings = { cwd: string | null, permissionPolicy: PermissionPolicy, contextWindow: number, autoCompact: boolean, };
+export type SkillInfo = { name: string, description: string, };
+export type ContextBudget = { contextWindow: number, estimatedTokens: number, availableTokens: number, shouldCompact: boolean, usage?: TokenUsage, };
+export type ContextSummary = { text: string, prefixMessageIds: Array<string>, createdAt: string, };
+export type AttachmentRef = { id: string, name: string, mimeType: string, bytes: number, };
+export type AttachmentData = { id: string, name: string, mimeType: string, bytes: number, data: string, };
+export type TokenUsage = { inputTokens: number | null, outputTokens: number | null, totalTokens: number | null, };
+export type ToolDefinition = { name: string, description: string, inputSchema: JsonValue, outputSchema: JsonValue, sideEffect: boolean, };
+export type PermissionPolicy = "read-only" | "ask" | "allow";
+export type PendingInteraction = { id: string, sessionId: string, runId: string, callId: string, kind: string, title: string, prompt: string, options: Array<string>, createdAt: number, };
+export type InteractionAnswer = { sessionId: string, id: string, decision: string, answer: string | null, };
+export type McpTransport = { "kind": "stdio", command: string, args: Array<string>, } | { "kind": "streamable-http", url: string, };
+export type McpServerConfig = { id: string, transport: McpTransport, enabled: boolean, };
+export type McpCredentials = { env: { [key in string]: string }, headers: { [key in string]: string }, };
+export type McpServerInput = {
+/**
+ * Omission preserves existing credentials; an empty object clears them.
+ */
+credentials: McpCredentials | null, id: string, transport: McpTransport, enabled: boolean, };
+export type McpServerView = { state: string, toolCount: number, hasCredentials: boolean, id: string, transport: McpTransport, enabled: boolean, };

@@ -45,11 +45,43 @@ pub struct RunSnapshot {
 impl Runtime {
     pub async fn start_run(
         self: &Arc<Self>,
-        request: StartRunRequest,
+        mut request: StartRunRequest,
     ) -> Result<RunHandle, String> {
         let stopped = self.stopped.lock().await;
         if *stopped {
             return Err("runtime is stopped".into());
+        }
+        self.sessions.get(&request.session_id)?;
+        if let Some(value) = request.options.get("attachments") {
+            let supplied: Vec<minerva_plugin_sdk::context::AttachmentRef> =
+                serde_json::from_value(value.clone())
+                    .map_err(|_| "Invalid attachment references")?;
+            if supplied.len() > 8 {
+                return Err("At most eight images can be sent in one message".into());
+            }
+            let mut total = 0usize;
+            let mut canonical = Vec::new();
+            for reference in supplied {
+                let stored = self
+                    .plugins
+                    .harness
+                    .context
+                    .get_attachment(&request.session_id, &reference.id)?;
+                total = total
+                    .checked_add(stored.bytes)
+                    .ok_or("Attachment size overflow")?;
+                if total > 20 * 1024 * 1024 {
+                    return Err("Combined image size exceeds 20 MiB".into());
+                }
+                canonical.push(minerva_plugin_sdk::context::AttachmentRef {
+                    id: stored.id,
+                    name: stored.name,
+                    mime_type: stored.mime_type,
+                    bytes: stored.bytes,
+                });
+            }
+            request.options["attachments"] =
+                serde_json::to_value(canonical).map_err(|e| e.to_string())?;
         }
         let mut tasks = self.tasks.lock().await;
         tasks.retain(|task| !task.is_finished());

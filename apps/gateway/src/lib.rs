@@ -69,7 +69,7 @@ pub fn gateway_router(state: GatewayState) -> Router {
             ServeDir::new(&state.config.web_dist)
                 .fallback(get(spa_fallback).with_state(state.clone())),
         )
-        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
 }

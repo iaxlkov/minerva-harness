@@ -1,5 +1,4 @@
 //! Cordis owns plugin lifetimes; the built-in manager publishes the roster service.
-use crate::codex::{CodexPlugin, CodexService};
 use crate::providers::{ProviderPlugin, ProviderService};
 use crate::shell::{ShellPlugin, ShellService};
 use cordis::event::{observer_sync, ListenerRegistrationError};
@@ -11,7 +10,7 @@ use std::path::PathBuf;
 use std::{
     convert::Infallible,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -52,15 +51,34 @@ pub struct PluginInfo {
     name: String,
     description: String,
     enabled: bool,
+    requested_enabled: bool,
+    optional_enabled: bool,
     can_toggle: bool,
     origin: String,
+    has_ui: bool,
+    error: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginModel {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub is_default: bool,
 }
 
 struct ManagerService {
+    harness: Arc<crate::harness::Harness>,
     context: Context,
+    lifecycle: Mutex<()>,
+    closing: AtomicBool,
     example: Mutex<Option<FiberHandle>>,
     example_events: Arc<AtomicUsize>,
-    external: Mutex<minerva_plugin_host::Host>,
+    external: Arc<minerva_plugin_host::Host>,
+    tool_updates: Mutex<()>,
+    tool_generations: std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
+    tool_errors: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
     local: bool,
 }
 impl Service for ManagerService {
@@ -81,38 +99,44 @@ impl ManagerService {
     }
     async fn list(&self) -> Vec<PluginInfo> {
         let example = self.example.lock().await;
+        let optional_enabled = self.external.optional_enabled();
+        let tool_errors = self.tool_errors.lock().unwrap().clone();
         let mut roster = vec![
             PluginInfo {
                 id: "plugin-manager".into(),
                 name: "Менеджер плагинов".into(),
                 description: "Предоставляет сервис управления встроенными плагинами.".into(),
                 enabled: true,
+                requested_enabled: true,
+                optional_enabled,
                 can_toggle: false,
                 origin: "builtin".into(),
+                has_ui: false,
+                error: None,
             },
             PluginInfo {
                 id: "providers".into(),
                 name: "Провайдеры моделей".into(),
                 description: "Конфигурация и подключение моделей.".into(),
                 enabled: self.context.try_service::<ProviderService>().is_ok(),
+                requested_enabled: true,
+                optional_enabled,
                 can_toggle: false,
                 origin: "builtin".into(),
-            },
-            PluginInfo {
-                id: "codex".into(),
-                name: "Codex".into(),
-                description: "Подключение Codex App Server.".into(),
-                enabled: self.local && self.context.try_service::<CodexService>().is_ok(),
-                can_toggle: false,
-                origin: "builtin".into(),
+                has_ui: false,
+                error: None,
             },
             PluginInfo {
                 id: "shell".into(),
                 name: "Командная оболочка".into(),
                 description: "Запуск команд и ограничения вывода.".into(),
                 enabled: self.local && self.context.try_service::<ShellService>().is_ok(),
+                requested_enabled: self.local,
+                optional_enabled,
                 can_toggle: false,
                 origin: "builtin".into(),
+                has_ui: false,
+                error: None,
             },
             PluginInfo {
                 id: "example".into(),
@@ -121,35 +145,96 @@ impl ManagerService {
                 enabled: example
                     .as_ref()
                     .is_some_and(|handle| handle.state() == FiberState::Active),
+                requested_enabled: self.external.example_enabled(),
+                optional_enabled,
                 can_toggle: true,
                 origin: "builtin".into(),
+                has_ui: false,
+                error: None,
             },
         ];
-        roster.extend(
-            self.external
-                .lock()
-                .await
-                .roster()
-                .into_iter()
-                .map(|(m, enabled)| PluginInfo {
-                    id: m.id.clone(),
-                    name: m.name.unwrap_or(m.id),
-                    description: m.description.unwrap_or_default(),
-                    enabled,
-                    can_toggle: true,
-                    origin: "installed".into(),
-                }),
-        );
+        roster.extend(self.external.roster().into_iter().map(|entry| {
+            if !entry.enabled {
+                self.harness
+                    .tools
+                    .revoke_owner(&format!("plugin:{}", entry.id));
+            }
+            let manifest = entry.manifest;
+            PluginInfo {
+                name: manifest
+                    .as_ref()
+                    .and_then(|m| m.name.clone())
+                    .unwrap_or_else(|| entry.id.clone()),
+                description: manifest
+                    .as_ref()
+                    .and_then(|m| m.description.clone())
+                    .unwrap_or_default(),
+                has_ui: manifest.as_ref().is_some_and(|m| m.ui.is_some()),
+                id: entry.id.clone(),
+                enabled: entry.enabled,
+                requested_enabled: entry.requested_enabled,
+                optional_enabled,
+                can_toggle: true,
+                origin: "installed".into(),
+                error: entry.error.or_else(|| tool_errors.get(&entry.id).cloned()),
+            }
+        }));
         roster
     }
     async fn set_enabled(&self, id: &str, enabled: bool) -> Result<Vec<PluginInfo>, String> {
-        if id != "example" && !["plugin-manager", "providers", "codex", "shell"].contains(&id) {
-            self.external.lock().await.set_enabled(id, enabled).await?;
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.closing.load(Ordering::SeqCst) {
+            return Err("Plugin manager is shutting down".into());
+        }
+        if id != "example" && !["plugin-manager", "providers", "shell"].contains(&id) {
+            if !enabled
+                || !self
+                    .external
+                    .roster()
+                    .iter()
+                    .any(|p| p.id == id && p.enabled)
+            {
+                self.harness.tools.revoke_owner(&format!("plugin:{id}"));
+            }
+            self.external.set_enabled(id, enabled).await?;
             return Ok(self.list().await);
         }
         if id != "example" {
             return Err("Управление этим плагином недоступно.".into());
         }
+        self.external.set_example_enabled(enabled).await?;
+        self.set_example_active(enabled && self.external.optional_enabled())
+            .await?;
+        Ok(self.list().await)
+    }
+    async fn set_optional_enabled(&self, enabled: bool) -> Result<Vec<PluginInfo>, String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.closing.load(Ordering::SeqCst) {
+            return Err("Plugin manager is shutting down".into());
+        }
+        if !enabled {
+            for entry in self.external.roster() {
+                self.harness
+                    .tools
+                    .revoke_owner(&format!("plugin:{}", entry.id));
+            }
+            self.tool_generations.lock().unwrap().clear();
+        }
+        let external = self.external.set_optional_enabled(enabled).await;
+        let example = self
+            .set_example_active(self.external.optional_enabled() && self.external.example_enabled())
+            .await;
+        let mcp = self
+            .harness
+            .mcp
+            .set_paused(!self.external.optional_enabled())
+            .await;
+        external?;
+        example?;
+        mcp?;
+        Ok(self.list().await)
+    }
+    async fn set_example_active(&self, enabled: bool) -> Result<(), String> {
         let mut example = self.example.lock().await;
         if enabled && example.is_none() {
             *example = Some(self.start_example().await?);
@@ -162,11 +247,13 @@ impl ManagerService {
                 *example = None;
             }
         }
-        drop(example);
-        Ok(self.list().await)
+        Ok(())
     }
     async fn shutdown(&self) {
-        self.external.lock().await.shutdown().await;
+        self.closing.store(true, Ordering::SeqCst);
+        let _lifecycle = self.lifecycle.lock().await;
+        self.harness.mcp.shutdown().await;
+        self.external.shutdown().await;
         if let Some(handle) = self.example.lock().await.take() {
             let _ = handle.dispose().await;
         }
@@ -191,11 +278,11 @@ impl Plugin for ManagerPlugin {
 }
 
 pub struct PluginManager {
+    pub harness: Arc<crate::harness::Harness>,
     context: Context,
     manager: FiberHandle,
     shell: FiberHandle,
     providers: FiberHandle,
-    codex: FiberHandle,
     #[cfg(test)]
     example_events: Arc<AtomicUsize>,
 }
@@ -219,13 +306,23 @@ impl PluginManager {
         local: bool,
         scope: crate::credential_store::CredentialScope,
     ) -> Result<Self, String> {
-        let mut external = minerva_plugin_host::Host::open(
+        let context_path = settings_path.with_file_name("context.sqlite3");
+        Self::start_scoped_at(settings_path, local, scope, context_path).await
+    }
+    pub async fn start_scoped_at(
+        settings_path: PathBuf,
+        local: bool,
+        scope: crate::credential_store::CredentialScope,
+        context_path: PathBuf,
+    ) -> Result<Self, String> {
+        let harness = Arc::new(crate::harness::Harness::open(&context_path, local)?);
+        let external = Arc::new(minerva_plugin_host::Host::open(
             settings_path
                 .parent()
                 .ok_or("settings path has no parent")?
                 .to_path_buf(),
             local,
-        )?;
+        )?);
         external.restore().await?;
         // Read fallible configuration before publishing any lifecycle effects.
         let shell_service = Arc::new(ShellService::new(settings_path.clone())?);
@@ -243,14 +340,25 @@ impl PluginManager {
         let context = Context::new();
         let example_events = Arc::new(AtomicUsize::new(0));
         let service = Arc::new(ManagerService {
+            harness: harness.clone(),
             context: context.clone(),
+            lifecycle: Mutex::new(()),
+            closing: AtomicBool::new(false),
             example: Mutex::new(None),
             example_events: example_events.clone(),
-            external: Mutex::new(external),
+            external,
+            tool_updates: Mutex::new(()),
+            tool_generations: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            tool_errors: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             local,
         });
         let mut started = Vec::new();
         let result = async {
+            harness
+                .mcp
+                .set_paused(!service.external.optional_enabled())
+                .await?;
+            harness.mcp.start().await;
             let manager = context
                 .spawn(PreparedPlugin::from_input(
                     ManagerPlugin {
@@ -261,7 +369,11 @@ impl PluginManager {
                 .await
                 .map_err(|e| e.to_string())?;
             started.push(manager.clone());
-            *service.example.lock().await = Some(service.start_example().await?);
+            service
+                .set_example_active(
+                    service.external.optional_enabled() && service.external.example_enabled(),
+                )
+                .await?;
             let shell = context
                 .spawn(PreparedPlugin::from_input(ShellPlugin(shell_service), ()))
                 .await
@@ -275,21 +387,10 @@ impl PluginManager {
                 .await
                 .map_err(|e| e.to_string())?;
             started.push(providers.clone());
-            let codex = context
-                .spawn(PreparedPlugin::from_input(
-                    CodexPlugin(Arc::new(if local {
-                        CodexService::default()
-                    } else {
-                        CodexService::hosted_unavailable()
-                    })),
-                    (),
-                ))
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok::<_, String>((manager, shell, providers, codex))
+            Ok::<_, String>((manager, shell, providers))
         }
         .await;
-        let (manager, shell, providers, codex) = match result {
+        let (manager, shell, providers) = match result {
             Ok(value) => value,
             Err(error) => {
                 service.shutdown().await;
@@ -300,11 +401,11 @@ impl PluginManager {
             }
         };
         Ok(Self {
+            harness,
             context,
             manager,
             shell,
             providers,
-            codex,
             #[cfg(test)]
             example_events,
         })
@@ -318,7 +419,18 @@ impl PluginManager {
         Ok(self.service()?.list().await)
     }
     pub async fn set_enabled(&self, id: &str, enabled: bool) -> Result<Vec<PluginInfo>, String> {
-        self.service()?.set_enabled(id, enabled).await
+        let service = self.service()?;
+        let id = id.to_owned();
+        // Accepted lifecycle changes finish even if their transport disconnects.
+        tokio::spawn(async move { service.set_enabled(&id, enabled).await })
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    pub async fn set_optional_enabled(&self, enabled: bool) -> Result<Vec<PluginInfo>, String> {
+        let service = self.service()?;
+        tokio::spawn(async move { service.set_optional_enabled(enabled).await })
+            .await
+            .map_err(|e| e.to_string())?
     }
     pub async fn plugin_call(
         &self,
@@ -326,12 +438,76 @@ impl PluginManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        self.service()?
-            .external
-            .lock()
-            .await
-            .call(id, method, params)
-            .await
+        if method.starts_with("engine.") || (method.starts_with("tools.") && method != "tools.list")
+        {
+            return Err("Engine methods require a supervised run".into());
+        }
+        self.service()?.external.call(id, method, params).await
+    }
+    pub(crate) async fn engine_call(
+        &self,
+        id: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        self.engine_host(id)?.call(id, method, params).await
+    }
+    pub(crate) fn engine_host(&self, id: &str) -> Result<Arc<minerva_plugin_host::Host>, String> {
+        let host = self.service()?.external.clone();
+        if !host.roster().iter().any(|entry| {
+            entry.enabled
+                && entry.id == id
+                && entry
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|m| m.capabilities.iter().any(|c| c == "model-engine"))
+        }) {
+            return Err("Model engine is not enabled".into());
+        }
+        Ok(host)
+    }
+    pub async fn models(&self) -> Result<Vec<PluginModel>, String> {
+        let service = self.service()?;
+        let mut requests = tokio::task::JoinSet::new();
+        for entry in service.external.roster() {
+            let Some(manifest) = entry.manifest else {
+                continue;
+            };
+            if !entry.enabled || !manifest.capabilities.iter().any(|c| c == "model-engine") {
+                continue;
+            }
+            let generation = entry.generation;
+            let service = service.clone();
+            requests.spawn(async move {
+                let result = service
+                    .external
+                    .call(&manifest.id, "engine.models", serde_json::json!({}))
+                    .await;
+                (manifest, generation, result)
+            });
+        }
+        let mut models = Vec::new();
+        while let Some(result) = requests.join_next().await {
+            let (manifest, generation, response) = result.map_err(|e| e.to_string())?;
+            match response.and_then(|value| catalogue(&manifest, value)) {
+                Ok(mut catalogue) => {
+                    service
+                        .external
+                        .set_catalog_error(&manifest.id, generation, None);
+                    models.append(&mut catalogue);
+                }
+                Err(error) => {
+                    service
+                        .external
+                        .set_catalog_error(&manifest.id, generation, Some(error))
+                }
+            }
+        }
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(models)
+    }
+    pub async fn ui_document(&self, id: &str) -> Result<String, String> {
+        self.service()?.external.ui_document(id)
     }
     pub fn shell(&self) -> Result<Arc<ShellService>, String> {
         self.context
@@ -343,18 +519,12 @@ impl PluginManager {
             .try_service::<ProviderService>()
             .map_err(|e| e.to_string())
     }
-    pub fn codex(&self) -> Result<Arc<CodexService>, String> {
-        self.context
-            .try_service::<CodexService>()
-            .map_err(|e| e.to_string())
-    }
     pub async fn shutdown(&self) {
-        let _ = self.codex.dispose().await;
-        let _ = self.providers.dispose().await;
-        let _ = self.shell.dispose().await;
         if let Ok(service) = self.service() {
             service.shutdown().await;
         }
+        let _ = self.providers.dispose().await;
+        let _ = self.shell.dispose().await;
         let _ = self.manager.dispose().await;
     }
     #[cfg(test)]
@@ -367,9 +537,388 @@ impl PluginManager {
     }
 }
 
+impl PluginManager {
+    pub async fn tools_for(&self, session: &str) -> Result<crate::tools::AdmittedTools, String> {
+        use sha2::{Digest, Sha256};
+        let service = self.service()?;
+        let _update = service.tool_updates.lock().await;
+        for entry in service.external.roster() {
+            let owner = format!("plugin:{}", entry.id);
+            if !entry.enabled {
+                service.harness.tools.revoke_owner(&owner);
+                service.tool_generations.lock().unwrap().remove(&entry.id);
+                continue;
+            }
+            if !entry
+                .manifest
+                .as_ref()
+                .is_some_and(|m| m.capabilities.iter().any(|c| c == "tools"))
+            {
+                continue;
+            }
+            if service.tool_generations.lock().unwrap().get(&entry.id) == Some(&entry.generation) {
+                continue;
+            }
+            service.harness.tools.revoke_owner(&owner);
+            let response = service
+                .external
+                .call(&entry.id, "tools.list", serde_json::json!({}))
+                .await;
+            let result = async {
+                let definitions: Vec<crate::tools::ToolDefinition> =
+                    serde_json::from_value(response?).map_err(|e| e.to_string())?;
+                if definitions.len() > 256 {
+                    return Err("Plugin tool catalogue exceeds limit".into());
+                }
+                for mut definition in definitions {
+                    let raw_name = definition.name.clone();
+                    if raw_name.is_empty()
+                        || raw_name.len() > 64
+                        || !raw_name
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    {
+                        return Err("Invalid plugin tool name".into());
+                    }
+                    let hash = format!("{:x}", Sha256::digest(entry.id.as_bytes()));
+                    definition.name = format!("plugin_{}__{raw_name}", &hash[..16]);
+                    let host = service.external.clone();
+                    let plugin = entry.id.clone();
+                    service
+                        .harness
+                        .tools
+                        .register(&owner, definition, move |context, args| {
+                            let host = host.clone();
+                            let plugin = plugin.clone();
+                            let name = raw_name.clone();
+                            Box::pin(async move {
+                                run_plugin_tool(host, &plugin, &name, args, context).await
+                            })
+                        })?;
+                }
+                Ok::<(), String>(())
+            }
+            .await;
+            match result {
+                Ok(()) => {
+                    service
+                        .tool_generations
+                        .lock()
+                        .unwrap()
+                        .insert(entry.id.clone(), entry.generation);
+                    service.tool_errors.lock().unwrap().remove(&entry.id);
+                }
+                Err(error) => {
+                    service.harness.tools.revoke_owner(&owner);
+                    service.tool_errors.lock().unwrap().insert(entry.id, error);
+                }
+            }
+        }
+        let admitted = self.harness.tools.snapshot();
+        let settings = self.harness.context.workspace_get(session)?;
+        Ok(if self.harness.local && settings.cwd.is_some() {
+            admitted
+        } else {
+            admitted.without_workspace()
+        })
+    }
+    pub async fn compact_messages(
+        &self,
+        session: &str,
+        model: &str,
+        messages: &[crate::sessions::SessionMessage],
+    ) -> Result<crate::context::ContextSummary, String> {
+        let (_sender, mut cancel) = tokio::sync::watch::channel(false);
+        self.compact_messages_cancellable(session, model, messages, &mut cancel)
+            .await
+    }
+    pub async fn compact_messages_cancellable(
+        &self,
+        session: &str,
+        model: &str,
+        messages: &[crate::sessions::SessionMessage],
+        cancel: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Result<crate::context::ContextSummary, String> {
+        if *cancel.borrow() {
+            return Err("Run cancelled".into());
+        }
+        let prefix = crate::context::compact_prefix(messages, 4);
+        if prefix.is_empty() {
+            return Err("There are not enough complete turns to compact".into());
+        }
+        let content = serde_json::to_string(
+            &prefix
+                .iter()
+                .map(|m| serde_json::json!({"role":m.role,"parts":m.parts}))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| e.to_string())?;
+        let summary = if let Some(route) = model.strip_prefix("api:") {
+            let (provider, model) = route.split_once('/').ok_or("Invalid model route")?;
+            let providers = self.providers()?;
+            tokio::select! {
+                biased;
+                _=cancel.changed()=>return Err("Run cancelled".into()),
+                summary=providers.summarize(provider,model,&content)=>summary?,
+            }
+        } else {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let run = format!("summary:{session}:{}", NEXT.fetch_add(1, Ordering::SeqCst));
+            let prompt=format!("Summarize this earlier conversation for continuation. Preserve decisions, changed files, tool outcomes and open tasks. Do not execute tools. Return only the summary.\n{content}");
+            crate::engine::run(
+                self,
+                &run,
+                model,
+                vec![crate::sessions::Turn::plain("user", &prompt)],
+                None,
+                Arc::new(|_| Ok(())),
+                cancel,
+            )
+            .await?
+            .0
+            .text()
+        };
+        if *cancel.borrow() {
+            return Err("Run cancelled".into());
+        }
+        self.harness
+            .context
+            .save_summary(session, &prefix, &summary)
+    }
+}
+
+// Dropping an HTTP request or model future must still stop its external work.
+pub(crate) struct ProcessRunLease {
+    host: Arc<minerva_plugin_host::Host>,
+    plugin: String,
+    prefix: &'static str,
+    reference: serde_json::Value,
+    armed: bool,
+}
+impl ProcessRunLease {
+    pub(crate) fn new(
+        host: Arc<minerva_plugin_host::Host>,
+        plugin: &str,
+        prefix: &'static str,
+        reference: serde_json::Value,
+    ) -> Self {
+        Self {
+            host,
+            plugin: plugin.into(),
+            prefix,
+            reference,
+            armed: true,
+        }
+    }
+    pub(crate) async fn finish(&mut self, failed: bool) {
+        if failed {
+            let _ = self
+                .host
+                .call(
+                    &self.plugin,
+                    &format!("{}.cancel", self.prefix),
+                    self.reference.clone(),
+                )
+                .await;
+        }
+        let _ = self
+            .host
+            .call(
+                &self.plugin,
+                &format!("{}.release", self.prefix),
+                self.reference.clone(),
+            )
+            .await;
+        self.armed = false;
+    }
+}
+impl Drop for ProcessRunLease {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let host = self.host.clone();
+            let plugin = self.plugin.clone();
+            let prefix = self.prefix;
+            let reference = self.reference.clone();
+            runtime.spawn(async move {
+                let _ = host
+                    .call(&plugin, &format!("{prefix}.cancel"), reference.clone())
+                    .await;
+                let _ = host
+                    .call(&plugin, &format!("{prefix}.release"), reference)
+                    .await;
+            });
+        }
+    }
+}
+
+async fn run_plugin_tool(
+    host: Arc<minerva_plugin_host::Host>,
+    plugin: &str,
+    name: &str,
+    args: serde_json::Value,
+    context: crate::tools::ToolContext,
+) -> Result<serde_json::Value, String> {
+    let wire_run = serde_json::to_string(&(&context.session_id, &context.run_id))
+        .map_err(|e| e.to_string())?;
+    let reference = serde_json::json!({"runId":wire_run,"callId":context.call_id});
+    let mut lease = ProcessRunLease::new(host.clone(), plugin, "tools", reference.clone());
+    let result=async {
+        host.call(plugin,"tools.start",serde_json::json!({"runId":wire_run,"callId":context.call_id,"name":name,"arguments":args})).await?;
+        loop {
+            if context.cancellation.is_cancelled(){return Err("Tool cancelled".into());}
+            let snapshot=host.call(plugin,"tools.poll",reference.clone()).await?;
+            match snapshot["status"].as_str() {
+                Some("completed")=>return Ok(snapshot["output"].clone()),
+                Some("failed"|"cancelled")=>return Err(snapshot["error"].as_str().unwrap_or("Plugin tool failed").into()),
+                Some("running")=>{},_=>return Err("Invalid plugin tool snapshot".into()),
+            }
+            tokio::select!{_=tokio::time::sleep(std::time::Duration::from_millis(100))=>{},_=context.cancellation.cancelled()=>{}}
+        }
+    }.await;
+    lease.finish(result.is_err()).await;
+    result
+}
+
+fn catalogue(
+    manifest: &minerva_plugin_sdk::Manifest,
+    value: serde_json::Value,
+) -> Result<Vec<PluginModel>, String> {
+    let catalogue: minerva_plugin_sdk::engine::EngineCatalog =
+        serde_json::from_value(value).map_err(|e| format!("Invalid engine catalogue: {e}"))?;
+    if let Some(error) = catalogue.error.filter(|error| !error.is_empty()) {
+        return Err(error);
+    }
+    if catalogue.models.len() > 1000 {
+        return Err("Engine catalogue exceeds limit".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    catalogue
+        .models
+        .into_iter()
+        .map(|model| {
+            if model.id.is_empty()
+                || model.id.len() > 256
+                || model.id.chars().any(char::is_control)
+                || !ids.insert(model.id.clone())
+            {
+                return Err("Invalid or duplicate engine model ID".into());
+            }
+            Ok(PluginModel {
+                id: format!("plugin:{}/{}", manifest.id, model.id),
+                name: model.name,
+                group: manifest.name.clone().unwrap_or_else(|| manifest.id.clone()),
+                is_default: model.is_default,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn accepted_optional_toggle_finishes_after_caller_disconnects() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Arc::new(
+            PluginManager::start(temp.path().join("shell.json"))
+                .await
+                .unwrap(),
+        );
+        let service = manager.service().unwrap();
+        let guard = service.lifecycle.lock().await;
+        let references = Arc::strong_count(&service);
+        let requester = manager.clone();
+        let request = tokio::spawn(async move { requester.set_optional_enabled(false).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while Arc::strong_count(&service) == references {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        request.abort();
+        let _ = request.await;
+        drop(guard);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let roster = manager.list().await.unwrap();
+                if roster
+                    .iter()
+                    .all(|p| !p.optional_enabled && (!p.can_toggle || !p.enabled))
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(manager.probe().await, 0);
+        assert!(manager.providers().is_ok());
+        assert!(manager.shell().is_ok());
+        manager.shutdown().await;
+        assert!(service.set_optional_enabled(true).await.is_err());
+    }
+    #[tokio::test]
+    async fn optional_switch_preserves_system_plugins_and_selection_across_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("shell.json");
+        let manager = PluginManager::start(path.clone()).await.unwrap();
+        manager.set_optional_enabled(false).await.unwrap();
+        assert_eq!(manager.probe().await, 0);
+        for entry in manager.list().await.unwrap() {
+            assert!(!entry.optional_enabled);
+            if entry.can_toggle {
+                assert!(!entry.enabled);
+                assert!(entry.requested_enabled);
+            } else {
+                assert!(entry.enabled);
+                assert!(manager.set_enabled(&entry.id, false).await.is_err());
+            }
+        }
+        manager.shutdown().await;
+        let manager = PluginManager::start(path.clone()).await.unwrap();
+        assert_eq!(manager.probe().await, 0);
+        manager.set_enabled("example", false).await.unwrap();
+        manager.set_optional_enabled(true).await.unwrap();
+        assert_eq!(manager.probe().await, 0);
+        manager.set_enabled("example", true).await.unwrap();
+        assert_eq!(manager.probe().await, 1);
+        manager.set_optional_enabled(false).await.unwrap();
+        manager.set_optional_enabled(true).await.unwrap();
+        assert_eq!(manager.probe().await, 2);
+        manager.shutdown().await;
+        let manager = PluginManager::start(path).await.unwrap();
+        assert_eq!(manager.probe().await, 1);
+        manager.shutdown().await;
+    }
+    #[test]
+    fn catalogue_rejects_entire_bad_response_without_partial_models() {
+        use serde_json::json;
+        let manifest: minerva_plugin_sdk::Manifest = serde_json::from_value(json!({
+            "id":"test.engine", "version":"1", "apiVersion":1,
+            "backend":{"kind":"process","entry":"engine"}
+        }))
+        .unwrap();
+        let model = json!({"id":"good","name":"Good","isDefault":true});
+        let valid = json!({"models":[model.clone()],"loading":false,"error":null});
+        assert_eq!(
+            catalogue(&manifest, valid).unwrap()[0].id,
+            "plugin:test.engine/good"
+        );
+        for invalid in [
+            json!({"models":[model.clone(),{"id":"","name":"Bad","isDefault":false}],"loading":false,"error":null}),
+            json!({"models":[model.clone(),model.clone()],"loading":false,"error":null}),
+            json!({"models":vec![model;1001],"loading":false,"error":null}),
+            json!({"models":[],"loading":false,"error":"Account unavailable"}),
+            json!("broken"),
+        ] {
+            assert!(catalogue(&manifest, invalid).is_err());
+        }
+    }
     #[tokio::test]
     async fn plugin_manager_publishes_service_and_cleans_up_lifetimes() {
         let temp = tempfile::tempdir().unwrap();

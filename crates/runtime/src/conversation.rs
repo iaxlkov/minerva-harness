@@ -1,6 +1,5 @@
 //! Executes a turn using the session's stored branch and the selected engine.
 use crate::{
-    codex::CodexOptions,
     plugins::PluginManager,
     runs::Runs,
     sessions::{ContentPart, IntegrationState, SessionMessage, SessionService},
@@ -65,24 +64,37 @@ pub(crate) async fn run_inner(
     guard: &mut crate::runs::RunGuard,
     accepted: bool,
 ) -> Result<SessionRunResult, String> {
-    let (turns, parent) = store.history(id, &request.last_message_id)?;
-    if turns
-        .last()
-        .is_none_or(|m| m.role != "user" || m.text().trim().is_empty())
-        || request.created_at.is_empty()
+    let messages = store.branch(id, &request.last_message_id)?;
+    let parent = messages.last().and_then(|m| m.parent_id.clone());
+    if messages.last().is_none_or(|m| {
+        m.role != "user"
+            || !m.parts.iter().any(|p| {
+                p.kind == "image"
+                    || p.kind == "text"
+                        && p.data["text"]
+                            .as_str()
+                            .is_some_and(|t| !t.trim().is_empty())
+            })
+    }) || request.created_at.is_empty()
     {
         return Err("Нужно непустое сообщение пользователя и время ответа.".into());
     }
-    // Capture reusable state before invalidating it: a failed remote turn may
-    // already have mutated the server's thread, so the old anchor is unsafe.
-    let state = store.integration_state(id, "codex")?;
+    let namespace = crate::engine::model_ref(&request.model).map(|(id, _)| format!("plugin:{id}"));
+    let state = match &namespace {
+        Some(namespace) => crate::engine::resume_state(
+            store.integration_state(id, namespace)?,
+            &request.model,
+            parent.as_deref(),
+        ),
+        None => None,
+    };
+    if let Some(namespace) = &namespace {
+        store.invalidate_integration(id, namespace)?;
+    }
     if !accepted {
         store.begin_run(id, &request.response_id, &request.last_message_id,
         &json!({"model":request.model,"options":request.options,"lastMessageId":request.last_message_id,"preamble":if request.model.starts_with("api:"){Some(crate::providers::PREAMBLE)}else{None}}),
-        request.model.starts_with("codex:").then_some("codex"))?;
-    }
-    if accepted && request.model.starts_with("codex:") {
-        store.invalidate_integration(id, "codex")?;
+        None)?;
     }
     let mut settlement = Settlement {
         store,
@@ -110,27 +122,93 @@ pub(crate) async fn run_inner(
             },
         )
     });
-    let result = tokio::select! {
-        biased;
-        _ = async { if !*guard.cancel.borrow() { let _ = guard.cancel.changed().await; } } => Err("Запрос отменён.".to_string()),
-        result = execute(manager,&request,turns,parent,state,sink) => result,
-    };
+    let result: Result<SessionRunResult, String> = async {
+        let mut prepared = manager.harness.context.prepare(id, &messages)?;
+        if prepared.budget.should_compact && !crate::context::compact_prefix(&messages, 4).is_empty() {
+            manager
+                .compact_messages_cancellable(id, &request.model, &messages, &mut guard.cancel)
+                .await?;
+            prepared = manager.harness.context.prepare(id, &messages)?;
+        }
+        let mut turns = prepared.turns;
+        let mut image_bytes = 0usize;
+        for turn in &mut turns {
+            for part in &mut turn.parts {
+                if part.kind == "image" {
+                    let image = manager.harness.context.get_attachment(
+                        id,
+                        part.data["id"].as_str().ok_or("Invalid image reference")?,
+                    )?;
+                    image_bytes = image_bytes.saturating_add(image.bytes);
+                    if image_bytes > 20 * 1024 * 1024 {
+                        return Err("Inline images exceed the 20 MiB context limit; compact earlier turns or start a new branch with fewer images".into());
+                    }
+                    part.data = serde_json::to_value(image).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        let cancellation = crate::tools::Cancellation::default();
+        let _cleanup = crate::harness::RunCleanup {
+            cancellation: cancellation.clone(),
+            interactions: manager.harness.interactions.clone(),
+            session: id.into(),
+            run: request.response_id.clone(),
+        };
+        let settings = manager.harness.context.workspace_get(id)?;
+        let run_context = crate::harness::AgentRunContext {
+            session_id: id.into(),
+            run_id: request.response_id.clone(),
+            tools: tokio::select! {
+                biased;
+                _ = async { if !*guard.cancel.borrow() { let _ = guard.cancel.changed().await; } } => return Err("Run cancelled".into()),
+                tools = manager.tools_for(id) => tools?,
+            },
+            context: manager.harness.context.clone(),
+            messages,
+            tool_context: crate::tools::ToolContext {
+                session_id: id.into(),
+                run_id: request.response_id.clone(),
+                call_id: String::new(),
+                cwd: settings.cwd.map(std::path::PathBuf::from),
+                policy: settings.permission_policy,
+                cancellation,
+                interactions: manager.harness.interactions.clone(),
+                sink: None,
+            },
+        };
+        if *guard.cancel.borrow() { return Err("Run cancelled".into()); }
+        if let Some(namespace) = namespace {
+            crate::engine::run_with_context(manager, &serde_json::to_string(&(id, &request.response_id)).map_err(|e| e.to_string())?, &request.model, turns, state, sink, &mut guard.cancel,Some(run_context)).await
+                .map(|(transcript, state)| SessionRunResult {
+                    parts: transcript.parts, replay: transcript.replay,
+                    integration: state.map(|value| IntegrationState { namespace, value: json!({"model":request.model,"anchorMessageId":request.response_id,"value":value}) }),
+                })
+        } else {
+            tokio::select! {
+                biased;
+                _ = async { if !*guard.cancel.borrow() { let _ = guard.cancel.changed().await; } } => Err("Запрос отменён.".to_string()),
+                result = execute(manager,&request,turns,sink,run_context) => result,
+            }
+        }
+    }.await;
     let result = result.and_then(|result| {
+        if *guard.cancel.borrow() {
+            return Err("Run cancelled".into());
+        }
         if result.parts.is_empty() {
             return Err("Модель не вернула содержимое ответа.".into());
         }
         let mut extensions = Map::new();
         extensions.insert("replay".into(), json!(result.replay));
         let message = SessionMessage {
-            id:request.response_id.clone(), parent_id:Some(request.last_message_id),
-            role:"assistant".into(), created_at:request.created_at,
-            parts:result.parts.clone(), extensions,
+            id: request.response_id.clone(),
+            parent_id: Some(request.last_message_id),
+            role: "assistant".into(),
+            created_at: request.created_at,
+            parts: result.parts.clone(),
+            extensions,
         };
-        let state = result.integration.as_ref().map(|s| IntegrationState {
-            namespace:s.namespace.clone(),
-            value:json!({"model":request.model,"threadId":s.value["threadId"],"anchorMessageId":message.id}),
-        });
-        store.commit_reply(id, &message, state.as_ref())?;
+        store.commit_reply(id, &message, result.integration.as_ref())?;
         Ok(result)
     });
     if let Err(error) = &result {
@@ -144,35 +222,17 @@ async fn execute(
     manager: &PluginManager,
     request: &RunRequest,
     turns: Vec<crate::sessions::Turn>,
-    parent: Option<String>,
-    state: Option<serde_json::Value>,
     sink: crate::transcript::TranscriptSink,
+    context: crate::harness::AgentRunContext,
 ) -> Result<SessionRunResult, String> {
     let model = request.model.as_str();
-    if let Some(codex_model) = model.strip_prefix("codex:") {
-        let thread = matching_codex_thread(state.as_ref(), model, parent.as_deref());
-        let options: CodexOptions = serde_json::from_value(request.options.clone())
-            .map_err(|e| format!("Некорректные настройки Codex: {e}"))?;
-        let result = manager
-            .codex()?
-            .chat_recorded(codex_model.into(), thread, turns, options, sink)
-            .await?;
-        return Ok(SessionRunResult {
-            parts: result.transcript.parts,
-            replay: result.transcript.replay,
-            integration: Some(IntegrationState {
-                namespace: "codex".into(),
-                value: serde_json::json!({"model":model,"threadId":result.thread_id}),
-            }),
-        });
-    }
     let value = model
         .strip_prefix("api:")
         .ok_or("Выберите модель в настройках.")?;
     let (provider, model) = value.split_once('/').ok_or("Некорректный ID модели")?;
     let transcript = manager
         .providers()?
-        .chat_recorded(provider, model, turns, sink)
+        .chat_agent(provider, model, turns, sink, context)
         .await?;
     Ok(SessionRunResult {
         parts: transcript.parts,
@@ -181,18 +241,6 @@ async fn execute(
     })
 }
 
-fn matching_codex_thread(
-    state: Option<&serde_json::Value>,
-    model: &str,
-    parent: Option<&str>,
-) -> Option<String> {
-    let state = state?;
-    let parent = parent?;
-    if state["model"] != model || state["anchorMessageId"].as_str()? != parent {
-        return None;
-    }
-    state["threadId"].as_str().map(str::to_owned)
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +250,183 @@ mod tests {
     };
     use serde_json::{json, Map};
     use std::io::{Read, Write};
+    #[tokio::test]
+    async fn cancellation_during_automatic_compaction_settles_without_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        let store = SessionService::open(&path).unwrap();
+        store.create("one").unwrap();
+        for index in 0..9 {
+            store
+                .save(
+                    "one",
+                    SessionMessage {
+                        id: format!("m{index}"),
+                        parent_id: (index > 0).then(|| format!("m{}", index - 1)),
+                        role: if index % 2 == 0 { "user" } else { "assistant" }.into(),
+                        created_at: "now".into(),
+                        parts: vec![ContentPart::text("text", "history".repeat(200))],
+                        extensions: Map::new(),
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        let manager = PluginManager::start(dir.path().join("shell.json"))
+            .await
+            .unwrap();
+        manager
+            .harness
+            .context
+            .workspace_save(
+                "one",
+                crate::context::WorkspaceSettings {
+                    context_window: 1024,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let (close_tx, close_rx) = std::sync::mpsc::channel();
+        let wire = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 4096];
+            while !String::from_utf8_lossy(&request).contains("Summarize") {
+                let count = socket.read(&mut buf).unwrap();
+                assert!(count > 0 && request.len() < 1024 * 1024);
+                request.extend_from_slice(&buf[..count]);
+            }
+            let _ = seen_tx.send(());
+            let _ = close_rx.recv_timeout(std::time::Duration::from_secs(5));
+        });
+        let provider = format!("compactcancel{}", std::process::id());
+        manager
+            .providers()
+            .unwrap()
+            .save(ProviderInput {
+                id: provider.clone(),
+                name: "fixture".into(),
+                base_url: format!("http://{address}/v1"),
+                models: vec!["model".into()],
+                api_key: Some("test-only".into()),
+                is_new: true,
+                protocol: "openai-chat".into(),
+            })
+            .await
+            .unwrap();
+        let runs = Runs::default();
+        let task = run(
+            &store,
+            &manager,
+            &runs,
+            "one",
+            RunRequest {
+                model: format!("api:{provider}/model"),
+                last_message_id: "m8".into(),
+                response_id: "reply".into(),
+                created_at: "now".into(),
+                options: json!({}),
+            },
+        );
+        let cancel = async {
+            seen_rx.await.unwrap();
+            assert!(runs.cancel("one", "reply").unwrap());
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::join!(task, cancel)
+        })
+        .await
+        .unwrap();
+        close_tx.send(()).unwrap();
+        wire.join().unwrap();
+        assert!(result.unwrap_err().to_lowercase().contains("cancel"));
+        let status: String = rusqlite::Connection::open(path)
+            .unwrap()
+            .query_row("SELECT status FROM runs WHERE id='reply'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "cancelled");
+        let messages = store.load("one").unwrap();
+        assert_eq!(messages.len(), 9);
+        assert!(!manager
+            .harness
+            .context
+            .prepare("one", &messages)
+            .unwrap()
+            .system_prompt
+            .contains("Summary of earlier"));
+        manager
+            .providers()
+            .unwrap()
+            .delete(&provider)
+            .await
+            .unwrap();
+        manager.shutdown().await;
+    }
+    #[tokio::test]
+    async fn context_preparation_failure_records_actual_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        let store = SessionService::open(&path).unwrap();
+        store.create("one").unwrap();
+        store
+            .save(
+                "one",
+                SessionMessage {
+                    id: "user".into(),
+                    parent_id: None,
+                    role: "user".into(),
+                    created_at: "now".into(),
+                    parts: vec![ContentPart::text("text", "hello")],
+                    extensions: Map::new(),
+                },
+                None,
+            )
+            .unwrap();
+        let manager = PluginManager::start(dir.path().join("shell.json"))
+            .await
+            .unwrap();
+        manager
+            .harness
+            .context
+            .workspace_save(
+                "one",
+                crate::context::WorkspaceSettings {
+                    cwd: Some(dir.path().to_str().unwrap().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "x".repeat(1024 * 1024)).unwrap();
+        let error = run(
+            &store,
+            &manager,
+            &Runs::default(),
+            "one",
+            RunRequest {
+                model: "api:missing/model".into(),
+                last_message_id: "user".into(),
+                response_id: "reply".into(),
+                created_at: "now".into(),
+                options: json!({}),
+            },
+        )
+        .await
+        .unwrap_err();
+        let saved: (String, String) = rusqlite::Connection::open(path)
+            .unwrap()
+            .query_row("SELECT status,error FROM runs WHERE id='reply'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(saved, ("failed".into(), error));
+        manager.shutdown().await;
+    }
     #[tokio::test]
     async fn failure_and_cancellation_are_not_model_messages_and_release_session() {
         let dir = tempfile::tempdir().unwrap();
@@ -304,28 +529,6 @@ mod tests {
             .unwrap();
         manager.shutdown().await;
     }
-    #[test]
-    fn resumes_codex_only_from_matching_saved_response() {
-        let state = json!({"model":"codex:model", "threadId":"thread", "anchorMessageId":"answer"});
-        assert_eq!(
-            matching_codex_thread(Some(&state), "codex:model", Some("answer")).as_deref(),
-            Some("thread")
-        );
-        assert_eq!(
-            matching_codex_thread(Some(&state), "codex:other", Some("answer")),
-            None
-        );
-        assert_eq!(
-            matching_codex_thread(Some(&state), "codex:model", Some("other")),
-            None
-        );
-        let unanchored =
-            json!({"model":"codex:model", "threadId":"thread", "anchorMessageId":null});
-        assert_eq!(
-            matching_codex_thread(Some(&unanchored), "codex:model", None),
-            None
-        );
-    }
     #[tokio::test]
     async fn sends_stored_branch_and_keeps_sessions_separate() {
         let dir = tempfile::tempdir().unwrap();
@@ -402,8 +605,13 @@ mod tests {
             assert!(request.contains("first response"));
             assert!(request.contains("next question"));
             assert!(!request.contains("other session only"));
-            let body = r#"{"id":"test","object":"chat.completion","created":1,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"local reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
-            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            assert!(String::from_utf8_lossy(&data).contains("\"stream\":true"));
+            let body = concat!(
+                "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"local reply\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
         });
         let manager = PluginManager::start(dir.path().join("shell.json"))
             .await
@@ -439,7 +647,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.parts[0].data["text"], "local reply");
-        assert!(result.integration.is_none());
         let saved = store.load("one").unwrap();
         assert_eq!(saved.last().unwrap().id, "a2");
         assert_eq!(saved.last().unwrap().parts[0].data["text"], "local reply");

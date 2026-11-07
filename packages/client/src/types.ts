@@ -2,18 +2,32 @@ export type ApiError = { code: string; message: string; requestId: string };
 export type ApiResult<T> = {ok:true;value:T}|{ok:false;error:ApiError};
 export type WorkspaceRef = {workspaceId:string};
 export type Bootstrap = {protocolVersion:1;csrfToken:string;principal:{id:string};workspace:{id:string};capabilities:string[]};
-// UI preference values remain strings; the wire CodexOptions DTO permits null.
-export type CodexOptions = {effort:string;summary:string;verbosity:string};
 export type { ContentPart, SessionInfo, SessionMessage, StartRunRequest, RunHandle, RunSnapshot,
-  ProviderView as Provider, ProviderInput, CodexModel, CodexStatus, LoginStatus, PluginInfo,
+  ProviderView as Provider, ProviderInput, PluginInfo, PluginModel,
   ShellSettings, ShellResult, RunRequest, SessionRunResult as RunReply,
-  SessionBaseline, SessionEvent, JsonValue, CodexOptions as CodexWireOptions } from './generated';
+  SessionBaseline, SessionEvent, JsonValue } from './generated';
 import type { ContentPart, SessionInfo, SessionMessage, StartRunRequest, RunHandle, RunSnapshot,
-  ProviderView as Provider, ProviderInput, CodexModel, CodexStatus, LoginStatus, PluginInfo,
+  ProviderView as Provider, ProviderInput, PluginInfo, PluginModel,
   ShellSettings, ShellResult, RunRequest, SessionRunResult as RunReply } from './generated';
+import type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnswer,ContextBudget,ContextSummary,AttachmentRef,AttachmentData,McpServerView,McpServerInput} from './generated';
+export type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnswer,ContextBudget,ContextSummary,AttachmentRef,AttachmentData,McpServerView,McpServerInput} from './generated';
 type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
+ 'workspace.get':Endpoint<{sessionId:string},WorkspaceSettings>;
+ 'workspace.save':Endpoint<{sessionId:string;settings:WorkspaceSettings},WorkspaceSettings>;
+ 'tools.list':Endpoint<{sessionId:string},ToolDefinition[]>;
+ 'interactions.list':Endpoint<{sessionId:string},PendingInteraction[]>;
+ 'interactions.answer':Endpoint<InteractionAnswer,boolean>;
+ 'context.status':Endpoint<{sessionId:string},ContextBudget>;
+ 'context.compact':Endpoint<{sessionId:string},ContextSummary>;
+ 'attachments.put':Endpoint<{sessionId:string;name:string;mimeType:string;data:string},AttachmentRef>;
+ 'attachments.get':Endpoint<{sessionId:string;id:string},AttachmentData>;
+ 'mcp.list':Endpoint<Empty,McpServerView[]>;
+ 'mcp.save':Endpoint<{server:McpServerInput},McpServerView[]>;
+ 'mcp.delete':Endpoint<{id:string},McpServerView[]>;
+ 'plugins.models':Endpoint<Empty,PluginModel[]>;
+ 'plugins.ui':Endpoint<{id:string},string>;
  'plugins.call':Endpoint<{id:string;method:string;params:import('./generated.ts').JsonValue},import('./generated.ts').JsonValue>;
  'runs.start':Endpoint<StartRunRequest,RunHandle>;
  'runs.get':Endpoint<RunHandle,RunSnapshot>;
@@ -24,9 +38,8 @@ export interface Endpoints {
  session_run:Endpoint<{id:string;request:RunRequest},RunReply>; session_cancel:Endpoint<{id:string;runId:string},boolean>;
  model_providers:Endpoint<Empty,Provider[]>; save_model_provider:Endpoint<{provider:ProviderInput},Provider[]>;
  discover_models:Endpoint<{provider:ProviderInput},string[]>; delete_model_provider:Endpoint<{id:string},Provider[]>;
- codex_models:Endpoint<Empty,CodexModel[]>; codex_status:Endpoint<Empty,CodexStatus>; codex_quota:Endpoint<Empty,CodexStatus>;
- codex_login:Endpoint<Empty,LoginStatus>; codex_login_status:Endpoint<Empty,LoginStatus|null>;
  list_plugins:Endpoint<Empty,PluginInfo[]>; set_plugin_enabled:Endpoint<{id:string;enabled:boolean},PluginInfo[]>;
+ set_optional_plugins_enabled:Endpoint<{enabled:boolean},PluginInfo[]>;
  shell_settings:Endpoint<Empty,ShellSettings>; save_shell_settings:Endpoint<{settings:ShellSettings},ShellSettings>; run_shell_command:Endpoint<{command:string},ShellResult>;
 }
 export type Method = keyof Endpoints;

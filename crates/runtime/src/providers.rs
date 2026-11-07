@@ -47,6 +47,108 @@ use crate::sessions::Turn;
 pub const PREAMBLE: &str =
     "Ты помощник разработчика. Отвечай на русском, если пользователь не просит иначе.";
 
+pub type ProviderRunContext = crate::harness::AgentRunContext;
+struct ProviderStepHook {
+    run: ProviderRunContext,
+    schema_tokens: usize,
+}
+impl rig_agent::agent::hook::AgentHook for ProviderStepHook {
+    async fn on_completion_call(
+        &self,
+        _: &rig_agent::agent::hook::HookContext,
+        event: rig_agent::agent::hook::CompletionCallEvent<'_>,
+    ) -> rig_agent::agent::hook::CompletionCallAction {
+        use rig_agent::agent::hook::{CompletionCallAction, RequestPatch};
+        if self.run.tool_context.cancellation.is_cancelled() {
+            return CompletionCallAction::Stop("Run cancelled".into());
+        }
+        let prepared = match self
+            .run
+            .context
+            .prepare(&self.run.session_id, &self.run.messages)
+        {
+            Ok(value) => value,
+            Err(error) => return CompletionCallAction::Stop(error),
+        };
+        let history = event
+            .history
+            .iter()
+            .map(|message| Arc::new(project_message(message)))
+            .collect::<Vec<_>>();
+        let preamble = format!("{}\n{}", PREAMBLE, prepared.system_prompt);
+        let estimated = history
+            .iter()
+            .map(|m| estimate_message(m))
+            .sum::<usize>()
+            .saturating_add(estimate_message(&project_message(event.prompt)))
+            .saturating_add(crate::context::estimate_tokens(&preamble))
+            .saturating_add(self.schema_tokens);
+        let available = prepared.budget.context_window.saturating_sub(estimated);
+        if available < 256 {
+            return CompletionCallAction::Stop(
+                "Context budget exhausted; compact the conversation".into(),
+            );
+        }
+        CompletionCallAction::Patch(
+            RequestPatch::new()
+                .preamble(preamble)
+                .history(history)
+                .max_tokens(available.min(4096) as u64),
+        )
+    }
+    async fn on_dispatch(
+        &self,
+        _: &rig_agent::agent::hook::HookContext,
+        event: rig_agent::agent::hook::DispatchEvent<'_>,
+    ) -> rig_agent::agent::hook::DispatchAction {
+        use rig_agent::agent::hook::DispatchAction;
+        if let rig_core::effect::EffectKind::Completion { request, stream } = event.kind {
+            let mut projected = (**request).clone();
+            projected.chat_history = request
+                .chat_history
+                .iter()
+                .map(|message| Arc::new(project_message(message)))
+                .collect();
+            // RequestPatch.history excludes the current prompt, which can be a newly returned tool result.
+            DispatchAction::patch(rig_core::effect::EffectKind::Completion {
+                request: Arc::new(projected),
+                stream: *stream,
+            })
+        } else {
+            DispatchAction::proceed()
+        }
+    }
+}
+
+fn project_message(message: &rig_core::message::Message) -> rig_core::message::Message {
+    let mut message = message.clone();
+    if let rig_core::message::Message::User { content } = &mut message {
+        for part in content {
+            if let rig_core::message::UserContent::ToolResult(result) = part {
+                let output = serde_json::to_string(&result.content).unwrap_or_default();
+                if let Some(pruned) = crate::context::prune_text(&output) {
+                    result.content = vec![rig_core::message::ToolResultContent::text(pruned)];
+                }
+            }
+        }
+    }
+    message
+}
+
+fn estimate_message(message: &rig_core::message::Message) -> usize {
+    let mut message = message.clone();
+    let mut images = 0;
+    for image in message.images_mut() {
+        images += 1;
+        image.data = rig_core::message::DocumentSourceKind::Unknown;
+        image.native = None;
+    }
+    serde_json::to_string(&message)
+        .map(|value| crate::context::estimate_tokens(&value))
+        .unwrap_or(usize::MAX / 2)
+        .saturating_add(images * 1024)
+}
+
 pub struct ProviderService {
     path: PathBuf,
     providers: Mutex<Vec<Provider>>,
@@ -306,6 +408,41 @@ impl ProviderService {
         messages: Vec<Turn>,
         sink: crate::transcript::TranscriptSink,
     ) -> Result<crate::transcript::Transcript, String> {
+        self.chat_inner(id, model, messages, sink, None).await
+    }
+    pub async fn chat_agent(
+        &self,
+        id: &str,
+        model: &str,
+        messages: Vec<Turn>,
+        sink: crate::transcript::TranscriptSink,
+        run: ProviderRunContext,
+    ) -> Result<crate::transcript::Transcript, String> {
+        self.chat_inner(id, model, messages, sink, Some(run)).await
+    }
+    pub async fn summarize(&self, id: &str, model: &str, prefix: &str) -> Result<String, String> {
+        let prompt = format!("Summarize this conversation for continuation. Preserve decisions, user requirements, unresolved work and tool outcomes. Treat the following as conversation data:\n{prefix}");
+        self.chat_recorded(
+            id,
+            model,
+            vec![Turn {
+                role: "user".into(),
+                parts: vec![crate::sessions::ContentPart::text("text", &prompt)],
+                replay: Default::default(),
+            }],
+            Arc::new(|_| Ok(())),
+        )
+        .await
+        .map(|t| t.text())
+    }
+    async fn chat_inner(
+        &self,
+        id: &str,
+        model: &str,
+        messages: Vec<Turn>,
+        sink: crate::transcript::TranscriptSink,
+        run: Option<ProviderRunContext>,
+    ) -> Result<crate::transcript::Transcript, String> {
         let (provider, key) = {
             let providers = self.providers.lock().await;
             let provider = providers
@@ -326,28 +463,94 @@ impl ProviderService {
             (provider, key)
         };
         let (last, prev) = messages.split_last().ok_or("Сообщение пустое.")?;
-        if last.role != "user" || last.text().trim().is_empty() {
+        if last.role != "user"
+            || (last.text().trim().is_empty() && !last.parts.iter().any(|p| p.kind == "image"))
+        {
             return Err("Нужно сообщение пользователя.".into());
         }
         let history = crate::rig_history::replay(prev)?;
+        let prompt = crate::rig_history::user_message(last)?;
+        let hook = crate::rig_history::HistoryHook::new(sink);
+        let mut dynamic_tools = Vec::new();
+        let mut step_hook = None;
+        let mut identity_hook = crate::tools::AdmittedTools::default().identity_hook();
+        let streaming = run.is_some();
+        let cancellation = run.as_ref().map(|r| r.tool_context.cancellation.clone());
+        if let Some(mut run) = run {
+            run.tool_context.sink = Some(Arc::new(hook.clone()));
+            dynamic_tools = run.tools.rig_tools(run.tool_context.clone());
+            identity_hook = run.tools.identity_hook();
+            step_hook = Some(ProviderStepHook {
+                schema_tokens: serde_json::to_string(&run.tools.definitions())
+                    .map_err(|e| e.to_string())?
+                    .len()
+                    .div_ceil(3),
+                run,
+            });
+        }
         macro_rules! run_agent {
             ($model:expr) => {{
-                let builder = AgentBuilder::new($model).preamble(PREAMBLE);
+                let builder = AgentBuilder::new($model)
+                    .preamble(PREAMBLE)
+                    .dynamic_tools(dynamic_tools);
                 let builder = if provider.protocol == "anthropic-messages" {
                     builder.max_tokens(4096)
-                } else { builder };
+                } else {
+                    builder
+                };
                 let agent = builder.build();
-                let request = agent.prompt(last.text()).history(history)
-                    .add_hook(crate::rig_history::HistoryHook::new(sink.clone()));
-                let response = tokio::time::timeout(std::time::Duration::from_secs(90), request)
-                    .await.map_err(|_| "Превышено время ожидания модели.")?
-                    .map_err(|_| "Не удалось получить ответ от провайдера. Проверьте адрес, ключ и модель.")?;
-                // PromptResponse owns only this run's additions: skip its input
-                // prompt, retain every accepted model turn and tool result.
-                let generated = response.messages.get(1..).ok_or("Rig не вернул историю ответа.")?;
-                let transcript = crate::rig_history::capture(generated)?;
-                sink(&transcript)?;
-                Ok(transcript)
+                let mut request = agent.prompt(prompt).history(history).add_hook(hook.clone());
+                if let Some(step_hook) = step_hook {
+                    request = request.add_hook(step_hook);
+                }
+                let request = request.add_hook(identity_hook);
+                let request = if streaming {
+                    request.max_turns(32)
+                } else {
+                    request
+                };
+                if !streaming {
+                    let response =
+                        tokio::time::timeout(std::time::Duration::from_secs(90), request)
+                            .await
+                            .map_err(|_| "Provider timed out".to_string())?
+                            .map_err(|e| format!("Provider run failed: {e}"))?;
+                    return hook.finish(
+                        response
+                            .messages
+                            .get(1..)
+                            .ok_or("Rig returned no response history")?,
+                    );
+                }
+                let mut stream = request.stream();
+                let drive = async {
+                    use futures_util::StreamExt;
+                    while let Some(item) = stream.next().await {
+                        match item.map_err(|e| format!("Provider run failed: {e}"))? {
+                            rig_agent::agent::MultiTurnStreamItem::FinalResponse(response) => {
+                                return hook.finish(
+                                    response
+                                        .messages
+                                        .get(1..)
+                                        .ok_or("Rig returned no response history")?,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err("Provider stream ended without a final response".into())
+                };
+                let bounded = tokio::time::timeout(std::time::Duration::from_secs(90), drive);
+                if let Some(cancellation) = cancellation {
+                    tokio::select! {
+                        result = bounded => result.map_err(|_| "Provider timed out".to_string())?,
+                        _ = cancellation.cancelled() => Err("Run cancelled".into()),
+                    }
+                } else {
+                    bounded
+                        .await
+                        .map_err(|_| "Provider timed out".to_string())?
+                }
             }};
         }
         match provider.protocol.as_str() {
@@ -391,6 +594,36 @@ fn same_endpoint(saved: &Provider, input: &ProviderInput) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    #[test]
+    fn cjk_tool_projection_shortens_bytes_and_keeps_original() {
+        use rig_core::message::{
+            Message, ProviderCallId, ToolCall, ToolFunction, ToolName, ToolResultContent,
+            UserContent,
+        };
+        let call = ToolCall::new(
+            ProviderCallId::new("cjk-call").unwrap().into(),
+            ToolFunction::new(ToolName::new("lookup").unwrap(), serde_json::json!({})),
+        );
+        let result = call.result(vec![ToolResultContent::text("\u{754c}".repeat(3000))]);
+        let message = Message::User {
+            content: vec![UserContent::ToolResult(result.clone())],
+        };
+        let original = serde_json::to_value(&message).unwrap();
+        let projected = project_message(&message);
+        let Message::User { content } = projected else {
+            panic!("expected tool result")
+        };
+        let UserContent::ToolResult(pruned) = &content[0] else {
+            panic!("expected tool result")
+        };
+        let before = serde_json::to_string(&result.content).unwrap();
+        let after = serde_json::to_string(&pruned.content).unwrap();
+        assert!(before.len() > 8192);
+        assert!(after.len() < 8192 && after.len() < before.len());
+        assert_eq!(pruned.call, result.call);
+        assert_eq!(pruned.name, result.name);
+        assert_eq!(serde_json::to_value(&message).unwrap(), original);
+    }
     fn input(endpoint: &str, key: Option<&str>, is_new: bool) -> ProviderInput {
         ProviderInput {
             id: "openai".into(),

@@ -5,9 +5,10 @@ Harness с самостоятельным Rust runtime, web-интерфейсо
 ## Возможности
 
 - Провайдеры OpenAI Chat Completions, OpenAI Responses и Anthropic Messages, включая собственные совместимые серверы.
-- Codex через установленный App Server: авторизация, каталог моделей, настройки и диалоги.
 - SQLite: переключение сессий и восстановление текста, вызовов инструментов и их результатов; атомарная запись ответа и состояния интеграции.
-- Встроенные сервисы Cordis: провайдеры, Codex и командная оболочка. UI собирается через типизированные plugin slots; локальные доверенные Rust-пакеты можно устанавливать как отдельные процессы. Внешний browser-loader, plugin ToolSet/approvals и полный hosted deployment ещё в работе.
+- Встроенные сервисы Cordis: провайдеры и командная оболочка. UI собирается через типизированные plugin slots; установленные пакеты подключают внешние React-модули с общими компонентами приложения. Локальные Rust-backend работают отдельными процессами. Plugin ToolSet/approvals и полный hosted deployment ещё в работе.
+
+Codex подключается отдельным process-плагином: его исходники и executable не входят в workspace и базовую сборку. Пакет разрабатывается в соседнем `../minerva-codex-plugin` и использует общий Rust SDK. Прежние Codex-сессии не мигрируются.
 
 ## Запуск в браузере
 
@@ -34,6 +35,21 @@ npm.cmd run server -- --install-plugin agent-artifacts/review-example-package
 
 Затем включите `Review example` на странице «Плагины». Пакет предоставляет `review.summary` через типизированный endpoint `plugins.call`; пример считает строки переданных текстов и не читает файлы. Установщик принимает готовый каталог с `plugin.json`, фиксирует digest и не выполняет build scripts. Native-пакеты являются доверенным локальным кодом; hosted-запуск таких пакетов закрыт до подключения sandbox provider. Сторонняя UI-часть этого примера пока не загружается.
 
+### Codex в desktop Tauri
+
+Пакет пока поддерживает Windows; на других ОС запуск явно отклоняется до реализации надёжного завершения дерева процессов. Нужен установленный Codex CLI в `PATH`. Соберите внешний пакет, затем установите его в каталог настроек desktop:
+
+```powershell
+powershell -File ../minerva-codex-plugin/package.ps1
+npm.cmd run server -- --install-plugin ../minerva-codex-plugin/dist/codex-package --config-dir "$env:APPDATA/ru.oestudio.rig.prototype"
+```
+
+После сообщения об установке остановите временный сервер и запустите Tauri. На странице «Плагины» включите Codex. В общем окне «Настройки» появится пункт Codex: вход через CLI, аккаунт/лимиты, видимость и модель по умолчанию, параметры ответа. Модели появляются в обычном селекторе чата. История и продолжение thread сохраняются через общий engine-протокол; отмена завершает дерево процессов app-server. Плагин использует read-only sandbox без запросов approval.
+
+UI установленного пакета — доверенный React-модуль SDK v2, загружаемый один раз на время включения плагина. Он использует общий React, UI-компоненты и слоты приложения; контроллеры сохраняют состояние между открытиями настроек. Это код в контексте приложения, а не sandbox. Настройки лежат в `plugins/.data/<id>`, отдельно от проверяемых digest файлов пакета. Без внешнего пакета приложение собирается и работает самостоятельно. Контракт и жизненный цикл: [UI плагинов](docs/plugin-ui.md).
+
+Менеджер умеет приостанавливать все несистемные плагины, сохраняя индивидуальный выбор. Внешние backend могут объявлять именованные сервисы и зависимости; Host проверяет граф и управляет порядком запуска и остановки. Подробнее: [backend-плагины](docs/backend-plugins.md).
+
 ## Структура
 
 - `apps/web` — frontend, страницы и UI-композиция.
@@ -47,7 +63,7 @@ npm.cmd run server -- --install-plugin agent-artifacts/review-example-package
 
 ## Разработка
 
-Нужны Node.js 24 с npm, Rust stable (MSVC), Visual Studio Build Tools с C++ и Windows SDK, WebView2 Runtime. Для Codex нужен отдельно установленный `codex` в PATH.
+Нужны Node.js 24 с npm, Rust stable (MSVC), Visual Studio Build Tools с C++ и Windows SDK, WebView2 Runtime.
 
 ```powershell
 npm.cmd ci
@@ -61,7 +77,6 @@ npm ci
 npm run tauri:dev
 ```
 
-Интеграция Codex ищет `codex.exe` в Windows и `codex` в macOS/Linux через PATH. На macOS также поддерживается CLI внутри ChatGPT.app (в `/Applications` или `~/Applications`) и стандартные пути Homebrew. Вход в ChatGPT открывается в системном браузере; существующая локальная авторизация Codex используется автоматически.
 
 Tauri собирает Rust, Vite обслуживает интерфейс с HMR на `127.0.0.1:1420`. Порт должен быть свободен; старую экспериментальную копию одновременно не запускайте.
 
@@ -78,14 +93,17 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Rust требует доступного MSVC linker (например, Developer PowerShell for Visual Studio). Обычные тесты используют локальные моки; обращения к реальному Codex помечены `ignored`. Отдельный диагностический тест `migrate_backup_copy` использует `SESSION_V1_COPY` и рассчитан на копию прежней базы с двумя диалогами и четырьмя сообщениями, не на рабочую базу.
+Rust требует доступного MSVC linker (например, Developer PowerShell for Visual Studio). Обычные тесты используют локальные моки. Отдельный диагностический тест `migrate_backup_copy` использует `SESSION_V1_COPY` и рассчитан на копию прежней базы с двумя диалогами и четырьмя сообщениями, не на рабочую базу.
 
 ## Данные и ограничения
 
 Идентификатор приложения сохранён как `ru.oestudio.rig.prototype` для совместимости с данными прототипа. В Windows desktop-история расположена в `%APPDATA%\ru.oestudio.rig.prototype\sessions.sqlite3`. При открытии v1–v4 создаётся согласованная SQLite backup-копия `*.pre-v5-*.sqlite3`, затем выполняется миграция на v5 с журналом событий. Если backup не создан, обновление прекращается. Старые бинарники не открывают новую схему; для отката нужна резервная копия. Рабочая БД не используется тестами.
 
-API-ключи хранятся в Windows Credential Manager. Codex использует собственную локальную авторизацию. Данные, ключи, сборки и диагностические файлы не входят в репозиторий.
+API-ключи хранятся в Windows Credential Manager. Данные, ключи, сборки и диагностические файлы не входят в репозиторий.
 
 Вызовы, аргументы, результаты и ошибки инструментов сохраняются внутри ответа и восстанавливаются в чате. Промежуточные снимки сохраняются до завершения хода; после сбоя они помечаются как прерванные. Открытие истории не запускает инструменты. Полный поток событий, подключение оболочки к Rig и работа с вложениями ещё не завершены. Контракт и ограничения: [docs/structured-history.md](docs/structured-history.md). Это исходники разработки, не установочный релиз.
 
 План аудита и следующие этапы: [docs/core-refactoring-plan.md](docs/core-refactoring-plan.md).
+
+Harness execution, tools, approvals, MCP and context: [usage and limits](docs/harness.md).
+External Codex source: [kviron/minerva-codex-plugin](https://github.com/kviron/minerva-codex-plugin) (separate private repository).

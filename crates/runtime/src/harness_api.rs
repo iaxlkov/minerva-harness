@@ -1,0 +1,160 @@
+//! Shared, typed harness operations for HTTP and desktop transports.
+use crate::{context::*, tools::InteractionAnswer, Runtime};
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::Value;
+use std::sync::Arc;
+
+fn args<T: DeserializeOwned>(value: Value) -> Result<T, String> {
+    serde_json::from_value(value).map_err(|_| "Invalid harness arguments".into())
+}
+fn encoded(value: impl serde::Serialize) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| e.to_string())
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Session {
+    session_id: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Workspace {
+    session_id: String,
+    settings: WorkspaceSettings,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Upload {
+    session_id: String,
+    name: String,
+    mime_type: String,
+    data: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Attachment {
+    session_id: String,
+    id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Mcp {
+    server: crate::mcp::McpServerInput,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Id {
+    id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Empty {}
+
+impl Runtime {
+    pub async fn harness_call(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        if self.is_stopped().await {
+            return Err("runtime is stopped".into());
+        }
+        let harness = &self.plugins.harness;
+        match method {
+            "workspace.get" => {
+                let a: Session = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(harness.context.workspace_get(&a.session_id)?)
+            }
+            "workspace.save" => {
+                let a: Workspace = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                if !harness.local && a.settings.cwd.is_some() {
+                    return Err("Local workspaces are unavailable in this profile".into());
+                }
+                if self.sessions.baseline(&a.session_id)?.active_run.is_some() {
+                    return Err(
+                        "Wait for the active run before changing its workspace or policy".into(),
+                    );
+                }
+                encoded(harness.context.workspace_save(&a.session_id, a.settings)?)
+            }
+            "tools.list" => {
+                let a: Session = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(self.plugins.tools_for(&a.session_id).await?.definitions())
+            }
+            "interactions.list" => {
+                let a: Session = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(harness.interactions.list(&a.session_id))
+            }
+            "interactions.answer" => {
+                let a: InteractionAnswer = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(harness.interactions.answer(a))
+            }
+            "context.status" => {
+                let a: Session = args(params)?;
+                let messages = self.current_branch(&a.session_id)?;
+                encoded(harness.context.prepare(&a.session_id, &messages)?.budget)
+            }
+            "context.compact" => {
+                let a: Session = args(params)?;
+                if self.sessions.baseline(&a.session_id)?.active_run.is_some() {
+                    return Err("Cannot compact an active run".into());
+                }
+                encoded(self.compact_context(&a.session_id).await?)
+            }
+            "attachments.put" => {
+                let a: Upload = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(harness.context.put_attachment(
+                    &a.session_id,
+                    &a.name,
+                    &a.mime_type,
+                    &a.data,
+                )?)
+            }
+            "attachments.get" => {
+                let a: Attachment = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                encoded(harness.context.get_attachment(&a.session_id, &a.id)?)
+            }
+            "mcp.list" => {
+                let _: Empty = args(params)?;
+                encoded(harness.mcp.list())
+            }
+            "mcp.save" => {
+                let a: Mcp = args(params)?;
+                encoded(harness.mcp.save(a.server).await?)
+            }
+            "mcp.delete" => {
+                let a: Id = args(params)?;
+                encoded(harness.mcp.delete(&a.id).await?)
+            }
+            _ => Err("Unknown harness operation".into()),
+        }
+    }
+    pub fn current_branch(
+        &self,
+        session: &str,
+    ) -> Result<Vec<crate::sessions::SessionMessage>, String> {
+        self.sessions.get(session)?;
+        let messages = self.sessions.load(session)?;
+        match messages.last() {
+            Some(last) => self.sessions.branch(session, &last.id),
+            None => Ok(Vec::new()),
+        }
+    }
+    pub async fn compact_context(&self, session: &str) -> Result<ContextSummary, String> {
+        let selected = self
+            .sessions
+            .get(session)?
+            .model
+            .ok_or("Select a model before compacting history")?;
+        let messages = self.current_branch(session)?;
+        self.plugins
+            .compact_messages(session, &selected, &messages)
+            .await
+    }
+}

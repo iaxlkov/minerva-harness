@@ -1,0 +1,18 @@
+.execution-card summary { display:flex; align-items:center; gap:8px; }
+.execution-card .execution-path { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; opacity:.7; }
+.execution-card .tool-history-status { margin-left:auto; white-space:nowrap; }
+.execution-card[data-tool-state="failed"] .tool-history-status { color:#b04737; }
+.execution-card[data-tool-state="cancelled"] .tool-history-status { color:#766c60; }
+.execution-card pre { overflow:auto; max-height:360px; white-space:pre; }
+.execution-card summary:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+.execution-card .execution-metadata { margin-top:12px; font-size:12px; }
+.execution-card .execution-metadata summary { cursor:pointer; }
+.execution-matches { padding-left:20px; }
+.execution-matches li { margin-block:8px; }
+.execution-matches pre { margin:4px 0; }
+.execution-diff span[data-change="added"] { background:#23863618; }
+.execution-diff span[data-change="removed"] { background:#da363318; }
+.execution-image { margin:12px 0; }
+.execution-image img { display:block; max-width:100%; max-height:480px; object-fit:contain; border-radius:8px; }
+.execution-image figcaption { font-size:12px; opacity:.7; margin-top:4px; }
+@media(max-width:600px) { .execution-card .execution-path { display:none; } .execution-card summary { flex-wrap:wrap; } }

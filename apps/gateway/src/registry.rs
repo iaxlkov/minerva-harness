@@ -3,18 +3,27 @@ use minerva_server_control::policy::Action;
 /// Object IDs are local keys in that worker's isolated store; a UUID never selects another worker.
 pub fn method_action(method: &str) -> Option<Action> {
     Some(match method {
-        "session_list" | "model_providers" | "codex_models" | "list_plugins" => Action::List,
-        "session_get" | "session_load" | "runs.get" | "codex_status" | "codex_quota"
-        | "codex_login_status" | "shell_settings" => Action::Read,
-        "session_create" | "session_save" | "session_set_model" => Action::WriteFiles,
-        "session_run" | "runs.start" | "run_shell_command" => Action::Start,
+        "plugins.models" | "session_list" | "model_providers" | "list_plugins" | "tools.list"
+        | "interactions.list" | "mcp.list" => Action::List,
+        "session_get" | "session_load" | "runs.get" | "shell_settings" | "workspace.get"
+        | "context.status" | "attachments.get" => Action::Read,
+        "session_create" | "session_save" | "session_set_model" | "attachments.put" => {
+            Action::WriteFiles
+        }
+        "session_run" | "runs.start" | "run_shell_command" | "context.compact" => Action::Start,
         "session_cancel" | "runs.cancel" => Action::Cancel,
         "save_model_provider"
         | "discover_models"
         | "delete_model_provider"
-        | "codex_login"
-        | "save_shell_settings" => Action::Configure,
-        "set_plugin_enabled" | "plugins.call" => Action::ManagePlugins,
+        | "save_shell_settings"
+        | "workspace.save"
+        | "interactions.answer" => Action::Configure,
+        "set_plugin_enabled"
+        | "set_optional_plugins_enabled"
+        | "plugins.call"
+        | "plugins.ui"
+        | "mcp.save"
+        | "mcp.delete" => Action::ManagePlugins,
         _ => return None,
     })
 }
@@ -62,13 +71,9 @@ mod tests {
             "save_model_provider",
             "discover_models",
             "delete_model_provider",
-            "codex_models",
-            "codex_status",
-            "codex_quota",
-            "codex_login",
-            "codex_login_status",
             "list_plugins",
             "set_plugin_enabled",
+            "set_optional_plugins_enabled",
             "shell_settings",
             "save_shell_settings",
             "run_shell_command",

@@ -17,14 +17,19 @@ test('real Rust Host persists chat across reload and observes a run after the ta
   const content=JSON.parse(body);
   const user=content.messages.filter(m=>m.role==='user').at(-1)?.content;
   if(providerDelay)await new Promise(resolve=>setTimeout(resolve,providerDelay));
-  res.setHeader('Content-Type','application/json');
-  res.end(JSON.stringify({id:'fixture',object:'chat.completion',created:1,model:'fixture-model',choices:[{index:0,message:{role:'assistant',content:`Saved reply ${modelCalls}: ${typeof user==='string'?user:'question'}`},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}}));
+  expect(content.stream).toBe(true);
+  const text=`Saved reply ${modelCalls}: ${typeof user==='string'?user:'question'}`;
+  const chunk=(delta,finish_reason=null)=>({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture-model',choices:[{index:0,delta,finish_reason}]});
+  res.setHeader('Content-Type','text/event-stream');
+  res.write(`data: ${JSON.stringify(chunk({role:'assistant',content:text}))}\n\n`);
+  res.write(`data: ${JSON.stringify({...chunk({},'stop'),usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})}\n\n`);
+  res.end('data: [DONE]\n\n');
  });
  await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));
  const providerUrl=`http://127.0.0.1:${provider.address().port}/v1`;
  const executable=path.resolve('target/debug',process.platform==='win32'?'minerva-server.exe':'minerva-server');
  const env={...process.env};
- // Exercise only fixture HTTP, never an installed signed-in Codex or paid provider.
+ // Exercise only fixture HTTP, never a paid provider.
  if(process.platform==='win32')env.PATH=`${env.SystemRoot};${env.SystemRoot}\\System32`;
  else env.PATH='/usr/bin:/bin';
  for(const name of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','DEEPSEEK_API_KEY'])delete env[name];
@@ -79,12 +84,17 @@ test('real Rust Host persists chat across reload and observes a run after the ta
   expect(modelCalls).toBe(2);
 
   providerDelay=3000;
+  const cancelledStart=restored.waitForResponse(response=>response.url()===`${origin}/api/v1/rpc`&&response.request().postDataJSON()?.method==='runs.start');
   await restored.getByRole('textbox',{name:'Сообщение ассистенту'}).fill('cancel question');
   await restored.getByRole('button',{name:'Отправить сообщение',exact:true}).click();
   await expect.poll(()=>modelCalls).toBe(3);
+  const cancelledHandle=(await (await cancelledStart).json()).value;
   await restored.getByRole('button',{name:'Остановить ответ'}).click();
   await expect(restored.getByRole('button',{name:'Отправить сообщение',exact:true})).toBeVisible();
-  await expect(restored.locator('.message-interrupted').last()).toBeVisible();
+  // No checkpoint exists yet; cancellation must not manufacture an assistant message.
+  await expect.poll(async()=>(await rpc('runs.get',cancelledHandle)).status).toBe('cancelled');
+  await restored.reload();
+  await expect(restored.locator('.message.assistant')).toHaveCount(2);
  }finally{
   if(configured)await rpc('delete_model_provider',{id:providerId}).catch(()=>{});
   host.kill();await new Promise(resolve=>{if(host.exitCode!==null)resolve();else host.once('exit',resolve);});

@@ -46,3 +46,13 @@ test('explicit abort cancels the matching server run and preserves its partial t
  assert.equal(last.content[0].text,'partial');
  assert.equal(last.status.type,'incomplete');
 });
+
+test('image-only submissions carry durable attachment refs in run options',async()=>{
+ const ref={id:'image',name:'pixel.png',mimeType:'image/png',bytes:68};let request;
+ const ipc=async(method,params)=>{if(method==='runs.start'){request=params;return {sessionId:'s',runId:'a'};}if(method==='runs.get')return {sessionId:'s',runId:'a',status:'completed',parts:[],error:null};if(method==='session_load')return [];throw Error(method);};
+ const history=sessionHistory('s',()=>{},()=>{},ipc,{serverOwned:true});
+ const adapter=chatAdapter({invoke:ipc,sessionId:'s',model:'api:p/m',options:{},history,onRunning:()=>{},onSaved:()=>{},onError:()=>{},serverOwned:true});
+ const imageUser={...user,content:[{type:'image',image:'',providerMetadata:{minerva:{attachment:ref}}}]};
+ for await(const reply of adapter.run({...args(new AbortController()),messages:[imageUser]})){}
+ assert.deepEqual(request.options.attachments,[ref]);assert.equal(request.message.text,'');
+});

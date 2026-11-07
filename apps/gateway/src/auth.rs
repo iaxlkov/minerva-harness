@@ -208,7 +208,7 @@ pub async fn bootstrap(
     } else {
         vec![]
     };
-    Json(json!({"protocolVersion":1,"csrfToken":csrf.expose(),"principal":{"id":p.user_id(),"tenantId":p.tenant_id()},"workspace":{"id":id},"capabilities":capabilities,"permissions":{"read":true,"write":grant.role()!=Role::Viewer,"configure":grant.role()==Role::Owner,"managePlugins":grant.role()==Role::Owner},"mode":"hosted","hostedReady":ready,"unavailableReason":if ready{None}else{Some("No healthy runsc workspace worker is assigned")},"codex":{"login":false,"reason":"Hosted Codex login is not enabled"}})).into_response()
+    Json(json!({"protocolVersion":1,"csrfToken":csrf.expose(),"principal":{"id":p.user_id(),"tenantId":p.tenant_id()},"workspace":{"id":id},"capabilities":capabilities,"permissions":{"read":true,"write":grant.role()!=Role::Viewer,"configure":grant.role()==Role::Owner,"managePlugins":grant.role()==Role::Owner},"mode":"hosted","hostedReady":ready,"unavailableReason":if ready{None}else{Some("No healthy runsc workspace worker is assigned")}})).into_response()
 }
 pub async fn logout(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let p = match authenticate(&state, &headers, true).await {

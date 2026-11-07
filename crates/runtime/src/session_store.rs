@@ -355,7 +355,22 @@ impl SessionStore {
                 return Err("parent is not in this session".into());
             }
         }
-        tx.execute("INSERT INTO messages(session_id,message_id,parent_id,role,created_at,content_json,extras_json,seq) VALUES(?1,?2,?3,'user',?4,?5,'{}',(SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE session_id=?1))",params![request.session_id,request.message.id,request.parent_id,created_at,serde_json::to_string(&vec![ContentPart::text("text",&request.message.text)]).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+        let mut input = Vec::new();
+        if !request.message.text.is_empty() {
+            input.push(ContentPart::text("text", &request.message.text));
+        }
+        if let Some(images) = request.options["attachments"].as_array() {
+            input.extend(images.iter().cloned().map(|data| ContentPart {
+                kind: "image".into(),
+                data,
+            }));
+        }
+        crate::transcript::Transcript {
+            parts: input.clone(),
+            replay: Default::default(),
+        }
+        .validate()?;
+        tx.execute("INSERT INTO messages(session_id,message_id,parent_id,role,created_at,content_json,extras_json,seq) VALUES(?1,?2,?3,'user',?4,?5,'{}',(SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE session_id=?1))",params![request.session_id,request.message.id,request.parent_id,created_at,serde_json::to_string(&input).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         tx.execute(
             "INSERT INTO runs VALUES(?1,?2,?3,?4,'running',NULL,unixepoch())",
             params![
@@ -429,7 +444,7 @@ impl SessionStore {
     }
 }
 fn migrate_v1(tx: &rusqlite::Transaction<'_>) -> Result<(), String> {
-    tx.execute_batch("CREATE TABLE session_integration_state(session_id TEXT NOT NULL REFERENCES sessions(id),namespace TEXT NOT NULL,state_json TEXT NOT NULL,PRIMARY KEY(session_id,namespace)); INSERT INTO session_integration_state SELECT id,'codex',json_object('threadId',codex_thread_id,'model',codex_model,'anchorMessageId',(SELECT message_id FROM messages WHERE session_id=sessions.id AND role='assistant' ORDER BY seq DESC LIMIT 1)) FROM sessions WHERE codex_thread_id IS NOT NULL AND codex_model IS NOT NULL;").map_err(|e|e.to_string())?;
+    tx.execute_batch("CREATE TABLE session_integration_state(session_id TEXT NOT NULL REFERENCES sessions(id),namespace TEXT NOT NULL,state_json TEXT NOT NULL,PRIMARY KEY(session_id,namespace));").map_err(|e|e.to_string())?;
     let rows = {
         let mut q=tx.prepare("SELECT session_id,message_id,content_json,extras_json,run_config_json FROM messages").map_err(|e|e.to_string())?;
         let v = q

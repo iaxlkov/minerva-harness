@@ -60,32 +60,7 @@ pub struct IntegrationState {
     pub value: Value,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
-pub struct Turn {
-    pub role: String,
-    pub parts: Vec<ContentPart>,
-    #[serde(default)]
-    #[ts(type = "Record<string, JsonValue>")]
-    pub replay: Map<String, Value>,
-}
-impl Turn {
-    pub fn text(&self) -> String {
-        self.parts
-            .iter()
-            .filter(|p| p.kind == "text")
-            .filter_map(|p| p.data["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-    #[cfg(test)]
-    pub fn plain(role: &str, text: &str) -> Self {
-        Self {
-            role: role.into(),
-            parts: vec![ContentPart::text("text", text)],
-            replay: Map::new(),
-        }
-    }
-}
+pub use minerva_plugin_sdk::engine::Turn;
 
 #[derive(Clone)]
 pub struct SessionService {
@@ -116,7 +91,10 @@ impl SessionService {
             || !valid_id(&request.request_id)
             || !valid_id(&request.message.id)
             || request.message.id == request.request_id
-            || request.message.text.trim().is_empty()
+            || (request.message.text.trim().is_empty()
+                && !request.options["attachments"]
+                    .as_array()
+                    .is_some_and(|v| !v.is_empty()))
             || request.parent_id.as_deref().is_some_and(|p| !valid_id(p))
         {
             return Err("invalid run request".into());
@@ -188,7 +166,7 @@ impl SessionService {
             }
         }
         if let Some(value) = state.as_ref() {
-            if !valid_id(&value.namespace) {
+            if !valid_namespace(&value.namespace) {
                 return Err("Некорректный ID интеграции".into());
             }
         }
@@ -254,12 +232,10 @@ impl SessionService {
     ) -> Result<(), String> {
         self.store.fail_run(session, id, cancelled, error)
     }
-    pub fn history(&self, id: &str, last_id: &str) -> Result<(Vec<Turn>, Option<String>), String> {
+    pub fn branch(&self, id: &str, last_id: &str) -> Result<Vec<SessionMessage>, String> {
         let messages = self.load(id)?;
         let by_id: std::collections::HashMap<_, _> =
             messages.iter().map(|m| (m.id.as_str(), m)).collect();
-        let last = by_id.get(last_id).ok_or("Сообщение истории не найдено")?;
-        let parent = last.parent_id.clone();
         let mut chain = Vec::new();
         let mut current = Some(last_id.to_owned());
         let mut remaining = messages.len() + 1;
@@ -290,31 +266,45 @@ impl SessionService {
                     (item.role == "user" && p.kind == "extension")
                         || !matches!(
                             p.kind.as_str(),
-                            "text" | "reasoning" | "tool-call" | "tool-result" | "extension"
+                            "text"
+                                | "reasoning"
+                                | "tool-call"
+                                | "tool-result"
+                                | "extension"
+                                | "image"
                         )
                 }) {
                     return Err("Этот тип содержимого пока нельзя передать модели.".into());
                 }
-                chain.push(Turn {
-                    role: item.role.clone(),
-                    parts: item.parts.clone(),
-                    replay: item
-                        .extensions
-                        .get("replay")
-                        .and_then(Value::as_object)
-                        .cloned()
-                        .unwrap_or_default(),
-                });
+                chain.push((*item).clone());
             }
         }
         chain.reverse();
-        Ok((chain, parent))
+        Ok(chain)
+    }
+    pub fn history(&self, id: &str, last_id: &str) -> Result<(Vec<Turn>, Option<String>), String> {
+        let messages = self.branch(id, last_id)?;
+        let parent = messages.last().and_then(|m| m.parent_id.clone());
+        let turns = messages
+            .into_iter()
+            .map(|message| Turn {
+                role: message.role,
+                parts: message.parts,
+                replay: message
+                    .extensions
+                    .get("replay")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok((turns, parent))
     }
     pub fn set_model(&self, id: &str, model: &str) -> Result<(), String> {
         self.store.set_model(id, model)
     }
     pub fn integration_state(&self, id: &str, namespace: &str) -> Result<Option<Value>, String> {
-        if !valid_id(namespace) {
+        if !valid_namespace(namespace) {
             return Err("Некорректный ID интеграции".into());
         }
         self.store.integration_state(id, namespace)
@@ -326,6 +316,13 @@ fn valid_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+fn valid_namespace(namespace: &str) -> bool {
+    !namespace.is_empty()
+        && namespace.len() <= 128
+        && namespace
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
 }
 #[cfg(test)]
 mod tests {
@@ -421,8 +418,8 @@ mod tests {
                 "one",
                 message("a1", Some("u1"), "assistant", "answer"),
                 Some(IntegrationState {
-                    namespace: "codex".into(),
-                    value: json!({"threadId":"t1","model":"codex:m","anchorMessageId":"a1"}),
+                    namespace: "plugin:fixture.engine".into(),
+                    value: json!({"threadId":"t1","model":"fixture:m","anchorMessageId":"a1"}),
                 }),
             )
             .unwrap();
@@ -437,7 +434,10 @@ mod tests {
             "other"
         );
         assert_eq!(
-            service.integration_state("one", "codex").unwrap().unwrap()["threadId"],
+            service
+                .integration_state("one", "plugin:fixture.engine")
+                .unwrap()
+                .unwrap()["threadId"],
             "t1"
         );
         let (history, parent) = service.history("one", "a1").unwrap();
@@ -463,13 +463,16 @@ mod tests {
             "one",
             message("a1", Some("u1"), "assistant", "answer"),
             Some(IntegrationState {
-                namespace: "codex".into(),
+                namespace: "plugin:fixture.engine".into(),
                 value: json!({"threadId":"t1"}),
             }),
         );
         assert!(result.is_err());
         assert_eq!(service.load("one").unwrap().len(), 1);
-        assert!(service.integration_state("one", "codex").unwrap().is_none());
+        assert!(service
+            .integration_state("one", "plugin:fixture.engine")
+            .unwrap()
+            .is_none());
     }
     #[test]
     fn migration_preserves_v1_data() {
@@ -485,9 +488,7 @@ mod tests {
         assert_eq!(m[0].parts[1].data["data"], 42);
         assert_eq!(m[0].extensions["assistant-ui"]["parts"][0]["id"], "p1");
         assert_eq!(m[0].extensions["assistant-ui"]["runConfig"]["x"], 1);
-        let state = service.integration_state("one", "codex").unwrap().unwrap();
-        assert_eq!(state["threadId"], "thread");
-        assert_eq!(state["anchorMessageId"], "a1");
+        assert!(service.integration_state("one", "codex").unwrap().is_none());
         drop(service);
         let db = rusqlite::Connection::open(&path).unwrap();
         assert_eq!(
@@ -539,12 +540,5 @@ mod tests {
             .map(|s| service.load(&s.id).unwrap().len())
             .sum();
         assert_eq!(count, 4);
-        assert_eq!(
-            sessions
-                .iter()
-                .filter(|s| service.integration_state(&s.id, "codex").unwrap().is_some())
-                .count(),
-            1
-        );
     }
 }

@@ -8,7 +8,7 @@ const result = spawnSync('cargo', ['run', '--quiet', '-p', 'minerva-contracts'],
   maxBuffer: 16 * 1024 * 1024,
 });
 if (result.status !== 0) { process.stderr.write(result.stderr || String(result.error)); process.exit(result.status || 1); }
-const bytes = Buffer.from(result.stdout.replaceAll('\r\n', '\n'));
+const bytes = Buffer.from(result.stdout.replaceAll('\r\n', '\n').replace(/[\t ]+$/gm, ''));
 if (process.argv.includes('--check')) {
   let existing;
   try { existing = readFileSync(output); } catch { existing = Buffer.alloc(0); }

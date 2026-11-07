@@ -9,6 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Stdio,
+    sync::Mutex,
     time::Duration,
 };
 use tokio::{
@@ -16,589 +17,460 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
     time::timeout,
 };
+mod graph;
+mod package;
+mod process;
+mod storage;
+pub use package::{install_local, Package};
+pub use process::Process;
+use storage::*;
+
 const LIMIT: usize = 1024 * 1024;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-#[derive(Clone)]
-pub struct Package {
-    pub manifest: Manifest,
-    pub root: PathBuf,
-    pub digest: String,
+pub struct PluginStatus {
+    pub id: String,
+    pub manifest: Option<Manifest>,
+    pub enabled: bool,
+    pub requested_enabled: bool,
+    pub error: Option<String>,
+    pub generation: u64,
 }
-fn reparse(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        meta.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        meta.file_type().is_symlink()
-    }
-}
-fn files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    for entry in fs::read_dir(dir).map_err(err)? {
-        let p = entry.map_err(err)?.path();
-        let meta = fs::symlink_metadata(&p).map_err(err)?;
-        if reparse(&meta) {
-            return Err("symlinks are forbidden in plugin packages".into());
-        }
-        if meta.is_dir() {
-            files(root, &p, out)?
-        } else if meta.is_file() {
-            out.push(p.strip_prefix(root).map_err(err)?.to_path_buf())
-        } else {
-            return Err("unsupported package file".into());
-        }
-    }
-    Ok(())
-}
-impl Package {
-    pub fn load(root: &Path) -> Result<Self, String> {
-        if reparse(&fs::symlink_metadata(root).map_err(err)?) {
-            return Err("package root cannot be a symlink or reparse point".into());
-        }
-        let root = root.canonicalize().map_err(err)?;
-        if fs::metadata(root.join("plugin.json")).map_err(err)?.len() > 65536 {
-            return Err("manifest too large".into());
-        }
-        let bytes = fs::read(root.join("plugin.json")).map_err(err)?;
-        if bytes.len() > 65536 {
-            return Err("manifest too large".into());
-        }
-        let manifest: Manifest = serde_json::from_slice(&bytes).map_err(err)?;
-        manifest.validate()?;
-        let mut paths = Vec::new();
-        files(&root, &root, &mut paths)?;
-        paths.sort();
-        let mut hash = Sha256::new();
-        let mut total = 0u64;
-        for p in paths {
-            let size = fs::metadata(root.join(&p)).map_err(err)?.len();
-            if size > 256 * 1024 * 1024 - total {
-                return Err("package exceeds size limit".into());
-            }
-            let data = fs::read(root.join(&p)).map_err(err)?;
-            total += data.len() as u64;
-            if total > 256 * 1024 * 1024 {
-                return Err("package exceeds size limit".into());
-            }
-            let name = p.to_string_lossy().replace('\\', "/");
-            hash.update((name.len() as u64).to_le_bytes());
-            hash.update(name.as_bytes());
-            hash.update((data.len() as u64).to_le_bytes());
-            hash.update(data);
-        }
-        let package = Self {
-            manifest,
-            root,
-            digest: format!("{:x}", hash.finalize()),
-        };
-        if let Some(b) = &package.manifest.backend {
-            package.entry(&b.entry)?;
-        }
-        if let Some(u) = &package.manifest.ui {
-            package.entry(&u.entry)?;
-        }
-        Ok(package)
-    }
-    pub fn entry(&self, entry: &str) -> Result<PathBuf, String> {
-        minerva_plugin_sdk::relative_entry(entry)?;
-        let p = self.root.join(entry).canonicalize().map_err(err)?;
-        if !p.starts_with(&self.root) || !p.is_file() {
-            return Err("entry escapes package".into());
-        }
-        Ok(p)
-    }
-}
-/// Administrator-only local installation of an already built directory; executes no build scripts.
-fn cleanup_stage(path: &Path, plugins: &Path) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or("cleanup path has no parent")?
-        .canonicalize()
-        .map_err(err)?;
-    let expected = plugins.canonicalize().map_err(err)?;
-    if parent != expected || !path.file_name().is_some_and(|name| !name.is_empty()) {
-        return Err("cleanup escaped plugin directory".into());
-    }
-    let resolved = path.canonicalize().map_err(err)?;
-    if !resolved.starts_with(&expected) || resolved == expected {
-        return Err("cleanup target escapes plugin directory".into());
-    }
-    fs::remove_dir_all(path).map_err(err)
-}
-pub fn install_local(source: &Path, config: &Path) -> Result<String, String> {
-    let guard = WriterGuard::acquire(config)?;
-    let package = Package::load(source)?;
-    fs::create_dir_all(config.join("plugins")).map_err(err)?;
-    if config.join("plugins").canonicalize().map_err(err)?.parent()
-        != Some(config.canonicalize().map_err(err)?.as_path())
-    {
-        return Err("plugin directory escapes config directory".into());
-    }
-    let target = config.join("plugins").join(&package.manifest.id);
-    if target.exists() {
-        return Err("plugin already installed".into());
-    }
-    let stage = config
-        .join("plugins")
-        .join(format!(".stage-{}", package.manifest.id));
-    fs::create_dir(&stage).map_err(err)?;
-    let result = (|| {
-        let mut paths = Vec::new();
-        files(&package.root, &package.root, &mut paths)?;
-        for p in paths {
-            let dest = stage.join(&p);
-            fs::create_dir_all(dest.parent().unwrap()).map_err(err)?;
-            fs::copy(package.root.join(p), dest).map_err(err)?;
-        }
-        let copied = Package::load(&stage)?;
-        if copied.digest != package.digest {
-            return Err("package changed during install".into());
-        }
-        fs::rename(&stage, &target).map_err(err)?;
-        let locked = (|| {
-            let mut host = Host::open(config.to_path_buf(), true)?;
-            host.lock.plugins.insert(
-                package.manifest.id.clone(),
-                Locked {
-                    digest: package.digest.clone(),
-                    enabled: false,
-                },
-            );
-            host.persist(&guard)
-        })();
-        if let Err(error) = locked {
-            let _ = cleanup_stage(&target, &config.join("plugins"));
-            return Err(error);
-        }
-        Ok(package.manifest.id.clone())
-    })();
-    if result.is_err() {
-        let _ = cleanup_stage(&stage, &config.join("plugins"));
-    }
-    result
-}
-#[cfg(windows)]
-struct ProcessJob(isize);
-#[cfg(windows)]
-impl ProcessJob {
-    /// std::process discards the primary-thread HANDLE. Since CREATE_SUSPENDED permits
-    /// no plugin instructions before this point, the process has exactly one thread.
-    /// Retrieve its documented ToolHelp thread ID, attach the Job first, and only then
-    /// resume that thread. Any failure leaves it suspended and the caller kills it.
-    fn resume(child: &Child) -> Result<(), String> {
-        use windows_sys::Win32::{
-            Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-            System::{
-                Diagnostics::ToolHelp::*,
-                Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
-            },
-        };
-        let process_id = child.id().ok_or("child has no process id")?;
-        unsafe {
-            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-            if snapshot == INVALID_HANDLE_VALUE {
-                return Err(err(std::io::Error::last_os_error()));
-            }
-            let mut entry: THREADENTRY32 = std::mem::zeroed();
-            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-            let mut exists = Thread32First(snapshot, &mut entry);
-            let mut thread_id = None;
-            while exists != 0 {
-                if entry.th32OwnerProcessID == process_id {
-                    thread_id = Some(entry.th32ThreadID);
-                    break;
-                }
-                exists = Thread32Next(snapshot, &mut entry);
-            }
-            CloseHandle(snapshot);
-            let thread = OpenThread(
-                THREAD_SUSPEND_RESUME,
-                0,
-                thread_id.ok_or("suspended primary thread not found")?,
-            );
-            if thread.is_null() {
-                return Err(err(std::io::Error::last_os_error()));
-            }
-            let previous = ResumeThread(thread);
-            let error = std::io::Error::last_os_error();
-            CloseHandle(thread);
-            if previous == u32::MAX {
-                return Err(err(error));
-            }
-            if previous != 1 {
-                return Err("primary plugin thread was not suspended exactly once".into());
-            }
-        }
-        Ok(())
-    }
-    fn attach(child: &Child) -> Result<Self, String> {
-        use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
-        unsafe {
-            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if handle.is_null() {
-                return Err(std::io::Error::last_os_error().to_string());
-            }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformation,
-                &limits as *const _ as *const _,
-                std::mem::size_of_val(&limits) as u32,
-            ) == 0
-                || AssignProcessToJobObject(
-                    handle,
-                    child.raw_handle().ok_or("child has no handle")? as _,
-                ) == 0
-            {
-                let error = std::io::Error::last_os_error().to_string();
-                CloseHandle(handle);
-                return Err(error);
-            }
-            Ok(Self(handle as isize))
-        }
-    }
-}
-#[cfg(windows)]
-impl Drop for ProcessJob {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0 as _);
-        }
-    }
-}
-pub struct Process {
-    child: Child,
-    #[cfg(unix)]
-    group_id: u32,
-    #[cfg(windows)]
-    job: ProcessJob,
-    input: ChildStdin,
-    output: BufReader<ChildStdout>,
-    next: u64,
-    deadline: Duration,
-}
-impl Process {
-    pub async fn start(package: &Package, deadline: Duration) -> Result<Self, String> {
-        if Package::load(&package.root)?.digest != package.digest {
-            return Err("package digest changed".into());
-        }
-        let backend = package.manifest.backend.as_ref().ok_or("no backend")?;
-        let mut command = Command::new(package.entry(&backend.entry)?);
-        command
-            .current_dir(&package.root)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        // CREATE_NO_WINDOW | CREATE_SUSPENDED: the backend cannot fork before Job assignment.
-        command.creation_flags(0x08000000 | 0x00000004);
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command.spawn().map_err(err)?;
-        #[cfg(windows)]
-        let job = match ProcessJob::attach(&child) {
-            Ok(job) => job,
-            Err(error) => {
-                let _ = child.kill().await;
-                return Err(error);
-            }
-        };
-        #[cfg(windows)]
-        if let Err(error) = ProcessJob::resume(&child) {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err(error);
-        }
-        #[cfg(unix)]
-        let group_id = child.id().ok_or("child has no process id")?;
-        let input = child.stdin.take().ok_or("missing stdin")?;
-        let output = BufReader::new(child.stdout.take().ok_or("missing stdout")?);
-        let mut process = Self {
-            child,
-            #[cfg(unix)]
-            group_id,
-            #[cfg(windows)]
-            job,
-            input,
-            output,
-            next: 0,
-            deadline,
-        };
-        let value = process
-            .call(
-                "initialize",
-                json!({"apiVersion":1,"pluginId":package.manifest.id}),
-            )
-            .await?;
-        if value.get("apiVersion") != Some(&json!(1)) {
-            process.stop().await;
-            return Err("incompatible handshake".into());
-        }
-        Ok(process)
-    }
-    pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        self.next += 1;
-        let id = self.next;
-        let request =
-            serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
-                .map_err(err)?;
-        if request.len() > LIMIT {
-            return Err("request exceeds limit".into());
-        }
-        let result = timeout(self.deadline, async {
-            self.input.write_all(&request).await.map_err(err)?;
-            self.input.write_all(b"\n").await.map_err(err)?;
-            self.input.flush().await.map_err(err)?;
-            let mut line = Vec::new();
-            loop {
-                let buf = self.output.fill_buf().await.map_err(err)?;
-                if buf.is_empty() {
-                    return Err("plugin closed stdout".into());
-                }
-                let count = buf
-                    .iter()
-                    .position(|b| *b == b'\n')
-                    .map(|n| n + 1)
-                    .unwrap_or(buf.len());
-                if line.len() + count > LIMIT {
-                    return Err("response exceeds limit".into());
-                }
-                let done = buf[count - 1] == b'\n';
-                line.extend_from_slice(&buf[..count]);
-                self.output.consume(count);
-                if done {
-                    break;
-                }
-            }
-            let response: Value = serde_json::from_slice(&line).map_err(err)?;
-            if response.get("jsonrpc") != Some(&json!("2.0"))
-                || response.get("id") != Some(&json!(id))
-            {
-                return Err("invalid JSON-RPC response".into());
-            }
-            if let Some(error) = response.get("error") {
-                return Err(format!("plugin RPC error: {error}"));
-            }
-            response
-                .get("result")
-                .cloned()
-                .ok_or("missing RPC result".into())
-        })
-        .await
-        .map_err(|_| "plugin request timed out".to_string())
-        .and_then(|r| r);
-        if result.is_err() {
-            self.stop().await;
-        }
-        result
-    }
-    pub async fn stop(&mut self) {
-        #[cfg(windows)]
-        unsafe {
-            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job.0 as _, 1);
-        }
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-(self.group_id as i32), libc::SIGKILL);
-        }
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
-    }
-    pub async fn shutdown(&mut self) {
-        let _ = self.call("shutdown", Value::Null).await;
-        self.stop().await;
-    }
-}
-#[derive(Default, Serialize, Deserialize)]
-struct Lock {
-    plugins: BTreeMap<String, Locked>,
-}
-#[derive(Serialize, Deserialize)]
-struct Locked {
-    digest: String,
+#[derive(Default)]
+struct State {
+    package: Option<Package>,
     enabled: bool,
+    requested_enabled: bool,
+    generation: u64,
+    error: Option<String>,
+    catalog_error: Option<String>,
 }
-// OS advisory lock: all package installation and state mutations are a single-writer transaction.
-// The lock file remains present; the OS releases the lock if a writer crashes.
-struct WriterGuard(fs::File);
-impl WriterGuard {
-    async fn acquire_async(config: PathBuf) -> Result<Self, String> {
-        tokio::task::spawn_blocking(move || Self::acquire(&config))
-            .await
-            .map_err(err)?
-    }
-    fn acquire(config: &Path) -> Result<Self, String> {
-        fs::create_dir_all(config).map_err(err)?;
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(config.join("plugin-writer.lock"))
-            .map_err(err)?;
-        fs2::FileExt::lock_exclusive(&file).map_err(err)?;
-        Ok(Self(file))
+struct Entry {
+    state: Mutex<State>,
+    process: tokio::sync::Mutex<Option<Process>>,
+}
+impl Entry {
+    fn reap(&self) {
+        if let Ok(mut process) = self.process.try_lock() {
+            if process
+                .as_mut()
+                .is_some_and(|p| !matches!(p.child.try_wait(), Ok(None)))
+            {
+                process.take();
+                let mut state = self.state.lock().unwrap();
+                state.enabled = false;
+                state.error = Some("plugin process exited".into());
+            }
+        }
     }
 }
-impl Drop for WriterGuard {
+// Taking ownership ensures cancellation kills the process instead of reusing an unread response.
+struct Flight<'a> {
+    process: Option<Process>,
+    state: &'a Mutex<State>,
+}
+impl Drop for Flight<'_> {
     fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
+        if self.process.is_some() {
+            let mut state = self.state.lock().unwrap();
+            state.enabled = false;
+            state.error = Some("plugin operation cancelled".into());
+        }
     }
 }
-fn read_lock(config: &Path) -> Result<Lock, String> {
-    match fs::read(config.join("plugin-lock.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(err),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Lock::default()),
-        Err(e) => Err(err(e)),
+// Cancellation must also dispose idle processes fenced before an awaited shutdown.
+struct CleanupDisabled<'a>(&'a Host);
+impl Drop for CleanupDisabled<'_> {
+    fn drop(&mut self) {
+        let mut stopped: Vec<String> = self
+            .0
+            .entries
+            .iter()
+            .filter(|(_, entry)| !entry.state.lock().unwrap().enabled)
+            .map(|(id, _)| id.clone())
+            .collect();
+        self.0.dependents_first(&mut stopped);
+        for id in stopped {
+            if let Ok(mut process) = self.0.entries[&id].process.try_lock() {
+                process.take();
+            }
+        }
     }
 }
 pub struct Host {
     config: PathBuf,
-    lock: Lock,
-    packages: BTreeMap<String, Package>,
-    processes: BTreeMap<String, Process>,
+    entries: BTreeMap<String, Entry>,
     local: bool,
+    optional: std::sync::atomic::AtomicBool,
+    example: std::sync::atomic::AtomicBool,
+    lifecycle: tokio::sync::Mutex<()>,
 }
 impl Host {
     /// Hosted mode is deliberately disabled until a sandbox execution provider is integrated.
     pub fn open(config: PathBuf, local: bool) -> Result<Self, String> {
         let lock = read_lock(&config)?;
-        let mut packages = BTreeMap::new();
+        let mut entries = BTreeMap::new();
         let dir = config.join("plugins");
         if dir.exists() {
             for entry in fs::read_dir(dir).map_err(err)? {
                 let p = entry.map_err(err)?.path();
-                if p.file_name().unwrap().to_string_lossy().starts_with('.') {
+                let id = p.file_name().unwrap().to_string_lossy().into_owned();
+                if id.starts_with('.') {
                     continue;
                 }
-                let package = Package::load(&p)?;
-                if p.file_name().unwrap().to_string_lossy() != package.manifest.id {
-                    return Err("package directory/id mismatch".into());
-                }
-                packages.insert(package.manifest.id.clone(), package);
+                let result = Self::load_package(&p, &id);
+                let (package, error) = match result {
+                    Ok(package) => (Some(package), None),
+                    Err(error) => (None, Some(error)),
+                };
+                entries.insert(
+                    id,
+                    Entry {
+                        state: Mutex::new(State {
+                            package,
+                            error,
+                            ..State::default()
+                        }),
+                        process: tokio::sync::Mutex::new(None),
+                    },
+                );
             }
         }
+        for id in lock.plugins.keys() {
+            entries.entry(id.clone()).or_insert_with(|| Entry {
+                state: Mutex::new(State {
+                    error: Some("plugin package missing".into()),
+                    ..State::default()
+                }),
+                process: tokio::sync::Mutex::new(None),
+            });
+        }
+        for (id, entry) in &entries {
+            entry.state.lock().unwrap().requested_enabled =
+                lock.plugins.get(id).is_some_and(|p| p.enabled);
+        }
         Ok(Self {
+            optional: std::sync::atomic::AtomicBool::new(lock.optional_enabled),
+            example: std::sync::atomic::AtomicBool::new(lock.example_enabled),
+            lifecycle: tokio::sync::Mutex::new(()),
             config,
-            lock,
-            packages,
-            processes: BTreeMap::new(),
+            entries,
             local,
         })
     }
-    fn reap_exited(&mut self) {
-        self.processes
-            .retain(|_, process| matches!(process.child.try_wait(), Ok(None)));
+    fn load_package(path: &Path, id: &str) -> Result<Package, String> {
+        // Lock-file IDs are untrusted paths, including entries for missing packages.
+        minerva_plugin_sdk::relative_entry(id)?;
+        if id.contains(['/', '\\']) {
+            return Err("invalid plugin directory".into());
+        }
+        let package = Package::load(path)?;
+        if package.manifest.id != id {
+            return Err("package directory/id mismatch".into());
+        }
+        Ok(package)
     }
-    pub fn roster(&mut self) -> Vec<(Manifest, bool)> {
-        self.reap_exited();
-        self.packages
-            .values()
-            .map(|p| {
-                (
-                    p.manifest.clone(),
-                    self.processes.contains_key(&p.manifest.id),
-                )
+    pub fn roster(&self) -> Vec<PluginStatus> {
+        self.reap_dependencies();
+        self.entries
+            .iter()
+            .map(|(id, entry)| {
+                entry.reap();
+                let state = entry.state.lock().unwrap();
+                PluginStatus {
+                    id: id.clone(),
+                    manifest: state.package.as_ref().map(|p| p.manifest.clone()),
+                    enabled: state.enabled,
+                    requested_enabled: state.requested_enabled,
+                    error: state.error.clone().or_else(|| state.catalog_error.clone()),
+                    generation: state.generation,
+                }
             })
             .collect()
     }
-    pub async fn restore(&mut self) -> Result<(), String> {
-        let ids: Vec<_> = self
-            .lock
-            .plugins
-            .iter()
-            .filter(|(_, v)| v.enabled)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in ids {
-            self.set_enabled(&id, true).await?;
+    pub fn set_catalog_error(&self, id: &str, generation: u64, error: Option<String>) {
+        if let Some(entry) = self.entries.get(id) {
+            let mut state = entry.state.lock().unwrap();
+            if state.generation == generation {
+                state.catalog_error = error;
+            }
+        }
+    }
+    pub async fn restore(&self) -> Result<(), String> {
+        let _guard = self.lifecycle.lock().await;
+        self.reconcile().await?;
+        Ok(())
+    }
+    pub fn optional_enabled(&self) -> bool {
+        self.optional.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn example_enabled(&self) -> bool {
+        self.example.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub async fn set_example_enabled(&self, enabled: bool) -> Result<(), String> {
+        let guard = WriterGuard::acquire_async(self.config.clone()).await?;
+        let mut lock = read_lock(&self.config)?;
+        lock.example_enabled = enabled;
+        persist(&self.config, &lock, &guard)?;
+        self.example
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+    pub async fn set_optional_enabled(&self, enabled: bool) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        {
+            let guard = WriterGuard::acquire_async(self.config.clone()).await?;
+            let mut lock = read_lock(&self.config)?;
+            lock.optional_enabled = enabled;
+            persist(&self.config, &lock, &guard)?;
+        }
+        self.optional
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
+        self.reconcile().await?;
+        Ok(())
+    }
+    pub async fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
+        let entry = self.entries.get(id).ok_or("unknown external plugin")?;
+        {
+            let guard = WriterGuard::acquire_async(self.config.clone()).await?;
+            let mut lock = read_lock(&self.config)?;
+            let digest = entry
+                .state
+                .lock()
+                .unwrap()
+                .package
+                .as_ref()
+                .map(|p| p.digest.clone())
+                .unwrap_or_default();
+            lock.plugins
+                .entry(id.into())
+                .or_insert(Locked {
+                    digest,
+                    enabled: false,
+                })
+                .enabled = enabled;
+            persist(&self.config, &lock, &guard)?;
+        }
+        entry.state.lock().unwrap().requested_enabled = enabled;
+        self.reconcile().await?;
+        let state = entry.state.lock().unwrap();
+        if enabled && self.optional_enabled() && !state.enabled {
+            return Err(state
+                .error
+                .clone()
+                .unwrap_or_else(|| "plugin activation failed".into()));
         }
         Ok(())
     }
-    fn persist(&self, _guard: &WriterGuard) -> Result<(), String> {
-        let mut temp = tempfile::NamedTempFile::new_in(&self.config).map_err(err)?;
-        temp.write_all(&serde_json::to_vec_pretty(&self.lock).map_err(err)?)
-            .map_err(err)?;
-        temp.as_file().sync_all().map_err(err)?;
-        temp.persist(self.config.join("plugin-lock.json"))
-            .map_err(err)?;
-        Ok(())
-    }
-    pub async fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
-        self.reap_exited();
-        let guard = WriterGuard::acquire_async(self.config.clone()).await?;
-        // Reload under the writer lock, so an installer or another host cannot be overwritten.
-        self.lock = read_lock(&self.config)?;
-        let package = self.packages.get(id).ok_or("unknown external plugin")?;
-        if enabled {
-            if !package.manifest.capabilities.is_empty() || !package.manifest.requires.is_empty() {
-                return Err("capability grants and service dependencies are not supported by this local prototype".into());
+    async fn change_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
+        let entry = self.entries.get(id).ok_or("unknown external plugin")?;
+        entry.reap();
+        let generation = {
+            let mut state = entry.state.lock().unwrap();
+            if enabled && state.enabled {
+                return Ok(());
             }
-            if !self.local {
-                return Err("hosted plugin execution requires a sandbox execution provider".into());
+            state.generation += 1;
+            if !enabled {
+                state.enabled = false;
             }
-            if let Some(locked) = self.lock.plugins.get(id) {
-                if locked.digest != package.digest {
-                    return Err("locked package digest mismatch".into());
+            state.generation
+        };
+        let mut slot = entry.process.lock().await;
+        if entry.state.lock().unwrap().generation != generation {
+            return Err("plugin operation superseded".into());
+        }
+        let mut flight = Flight {
+            process: slot.take(),
+            state: &entry.state,
+        };
+        let mut storage_error = false;
+        let result: Result<(), String> = async {
+            let package =
+                if enabled {
+                    let package = Self::load_package(&self.config.join("plugins").join(id), id)?;
+                    {
+                        let mut state = entry.state.lock().unwrap();
+                        state.package = Some(package.clone());
+                    }
+                    if package.manifest.capabilities.iter().any(|c| {
+                        !matches!(c.as_str(), "model-engine" | "local-environment" | "tools")
+                    }) {
+                        return Err("unsupported host capability grant".into());
+                    }
+                    if !self.local {
+                        return Err(
+                            "hosted plugin execution requires a sandbox execution provider".into(),
+                        );
+                    }
+                    Some(package)
+                } else {
+                    None
+                };
+            // Only the short read/merge/write transaction holds the cross-process writer lock.
+            {
+                let mut storage = |error| {
+                    storage_error = true;
+                    error
+                };
+                let _guard = WriterGuard::acquire_async(self.config.clone())
+                    .await
+                    .map_err(&mut storage)?;
+                let lock = read_lock(&self.config).map_err(&mut storage)?;
+                if let Some(package) = &package {
+                    if lock
+                        .plugins
+                        .get(id)
+                        .is_some_and(|locked| locked.digest != package.digest)
+                    {
+                        return Err("locked package digest mismatch".into());
+                    }
                 }
             }
-            if !self.processes.contains_key(id) {
-                let process = Process::start(package, Duration::from_secs(3)).await?;
-                self.processes.insert(id.into(), process);
+            if enabled {
+                if !entry.state.lock().unwrap().enabled {
+                    flight.process.take();
+                }
+                if flight.process.is_none() {
+                    entry.state.lock().unwrap().error =
+                        Some("plugin activation interrupted".into());
+                    let package = package.as_ref().unwrap();
+                    flight.process = Some(
+                        Process::start_routed(package, Duration::from_secs(3), Some((self, id)))
+                            .await?,
+                    );
+                }
+            } else if let Some(process) = flight.process.as_mut() {
+                process.shutdown().await;
+                flight.process.take();
             }
-        } else if let Some(mut process) = self.processes.remove(id) {
-            process.shutdown().await;
-        }
-        self.lock.plugins.insert(
-            id.into(),
-            Locked {
-                digest: package.digest.clone(),
-                enabled,
-            },
-        );
-        if let Err(e) = self.persist(&guard) {
-            if let Some(mut process) = self.processes.remove(id) {
-                process.stop().await;
+            let mut state = entry.state.lock().unwrap();
+            if state.generation != generation {
+                flight.process.take();
+                return Err("plugin operation superseded".into());
             }
-            return Err(e);
+            state.enabled = enabled;
+            if enabled || state.package.is_some() {
+                state.error = None;
+            }
+            state.catalog_error = None;
+            Ok(())
         }
-        Ok(())
+        .await;
+        if let Err(error) = &result {
+            flight.process.take();
+            let mut state = entry.state.lock().unwrap();
+            state.enabled = false;
+            state.error = Some(error.clone());
+        }
+        if result.is_ok() {
+            *slot = flight.process.take();
+        }
+        if storage_error {
+            result
+        } else {
+            Ok(())
+        }
     }
-    pub async fn call(&mut self, id: &str, method: &str, params: Value) -> Result<Value, String> {
-        self.reap_exited();
+    pub async fn call(&self, id: &str, method: &str, params: Value) -> Result<Value, String> {
+        self.reap_dependencies();
         if method == "initialize" || method == "shutdown" {
             return Err("reserved plugin method".into());
         }
-        let result = self
-            .processes
-            .get_mut(id)
-            .ok_or("plugin disabled")?
-            .call(method, params)
-            .await;
-        if result.is_err() {
-            self.processes.remove(id);
+        let entry = self.entries.get(id).ok_or("unknown external plugin")?;
+        let generation = {
+            let state = entry.state.lock().unwrap();
+            if !state.enabled {
+                return Err("plugin disabled".into());
+            }
+            state.generation
+        };
+        let mut slot = entry.process.lock().await;
+        {
+            let state = entry.state.lock().unwrap();
+            if !state.enabled || state.generation != generation {
+                return Err("plugin disabled".into());
+            }
+        }
+        let mut flight = Flight {
+            process: Some(slot.take().ok_or("plugin disabled")?),
+            state: &entry.state,
+        };
+        let process = flight.process.as_mut().unwrap();
+        let result = process.call_routed(method, params, Some((self, id))).await;
+        let current = {
+            let state = entry.state.lock().unwrap();
+            state.enabled && state.generation == generation
+        };
+        if matches!(process.child.try_wait(), Ok(None)) && current {
+            *slot = flight.process.take();
+        } else {
+            flight.process.take();
+            let mut state = entry.state.lock().unwrap();
+            state.enabled = false;
+            state.error = Some(
+                result
+                    .as_ref()
+                    .err()
+                    .cloned()
+                    .unwrap_or_else(|| "plugin process exited".into()),
+            );
+        }
+        drop(slot);
+        self.reap_dependencies();
+        if !current {
+            return Err("plugin operation superseded".into());
         }
         result
     }
-    pub async fn shutdown(&mut self) {
-        for (_, mut process) in std::mem::take(&mut self.processes) {
-            process.shutdown().await;
+    pub fn ui_document(&self, id: &str) -> Result<String, String> {
+        self.reap_dependencies();
+        let entry = self.entries.get(id).ok_or("unknown plugin")?;
+        entry.reap();
+        let package = {
+            let state = entry.state.lock().unwrap();
+            if !self.local || !state.enabled {
+                return Err("plugin disabled".into());
+            }
+            state.package.clone().ok_or("plugin package invalid")?
+        };
+        if Package::load(&package.root)?.digest != package.digest {
+            return Err("package digest changed".into());
         }
+        let path = package.entry(
+            &package
+                .manifest
+                .ui
+                .as_ref()
+                .ok_or("plugin has no UI")?
+                .entry,
+        )?;
+        if fs::metadata(&path).map_err(err)?.len() > 256 * 1024 {
+            return Err("plugin UI too large".into());
+        }
+        fs::read_to_string(path).map_err(err)
     }
-}
-
-#[cfg(unix)]
-impl Drop for Process {
-    fn drop(&mut self) {
-        unsafe {
-            libc::kill(-(self.group_id as i32), libc::SIGKILL);
+    pub async fn shutdown(&self) {
+        let _cleanup = CleanupDisabled(self);
+        for entry in self.entries.values() {
+            let mut state = entry.state.lock().unwrap();
+            state.generation += 1;
+            state.enabled = false;
+        }
+        let mut order: Vec<String> = self.entries.keys().cloned().collect();
+        self.dependents_first(&mut order);
+        for id in order {
+            let entry = &self.entries[&id];
+            if let Some(process) = entry.process.lock().await.take() {
+                let mut flight = Flight {
+                    process: Some(process),
+                    state: &entry.state,
+                };
+                flight.process.as_mut().unwrap().shutdown().await;
+                flight.process.take();
+            }
         }
     }
 }

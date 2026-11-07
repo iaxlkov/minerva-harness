@@ -1,7 +1,22 @@
 //! Rust DTOs are the source of truth; no Rust source parsing is involved.
+use minerva_runtime::context::{
+    AttachmentData, AttachmentRef, ContextBudget, ContextSummary, SkillInfo, TokenUsage,
+    WorkspaceSettings,
+};
+use minerva_runtime::mcp::{
+    McpCredentials, McpServerConfig, McpServerInput, McpServerView, McpTransport,
+};
+use minerva_runtime::tools::{
+    InteractionAnswer, PendingInteraction, PermissionPolicy, ToolDefinition,
+};
 use minerva_runtime::{
-    codex::*, conversation::*, plugins::PluginInfo, providers::*, sessions::*, shell::*,
-    transcript::*, RunHandle, RunMessage, RunSnapshot, StartRunRequest,
+    conversation::*,
+    plugins::{PluginInfo, PluginModel},
+    providers::*,
+    sessions::*,
+    shell::*,
+    transcript::*,
+    RunHandle, RunMessage, RunSnapshot, StartRunRequest,
 };
 use ts_rs::TS;
 
@@ -34,15 +49,26 @@ fn main() {
         Provider,
         ProviderView,
         ProviderInput,
-        LoginStatus,
-        QuotaWindow,
-        CodexStatus,
-        CodexModel,
-        CodexReply,
-        CodexOptions,
         PluginInfo,
+        PluginModel,
         ShellSettings,
-        ShellResult
+        ShellResult,
+        WorkspaceSettings,
+        SkillInfo,
+        ContextBudget,
+        ContextSummary,
+        AttachmentRef,
+        AttachmentData,
+        TokenUsage,
+        ToolDefinition,
+        PermissionPolicy,
+        PendingInteraction,
+        InteractionAnswer,
+        McpTransport,
+        McpServerConfig,
+        McpCredentials,
+        McpServerInput,
+        McpServerView
     );
     print!("{output}");
 }
@@ -50,7 +76,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::json;
 
     #[test]
     fn serde_fixtures_preserve_camel_case_null_and_neutral_json() {
@@ -83,25 +109,5 @@ mod tests {
             StartRunRequest::decl(&ts_rs::Config::default().with_large_int("number"))
                 .contains("options: JsonValue")
         );
-        assert!(
-            CodexOptions::decl(&ts_rs::Config::default().with_large_int("number"))
-                .contains("effort: string | null")
-        );
-        let status = CodexStatus {
-            connected: false,
-            account_type: None,
-            email: None,
-            message: String::new(),
-            quota: None,
-            quota_error: None,
-        };
-        let value: Value = serde_json::to_value(status).unwrap();
-        for field in ["accountType", "email", "quota", "quotaError"] {
-            assert_eq!(value[field], Value::Null);
-            assert!(
-                CodexStatus::decl(&ts_rs::Config::default().with_large_int("number"))
-                    .contains(field)
-            );
-        }
     }
 }

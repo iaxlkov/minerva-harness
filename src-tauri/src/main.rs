@@ -1,6 +1,5 @@
 #![windows_subsystem = "windows"]
 
-use minerva_runtime::codex;
 use minerva_runtime::conversation;
 use minerva_runtime::plugins;
 use minerva_runtime::providers;
@@ -8,7 +7,6 @@ use minerva_runtime::runs;
 use minerva_runtime::sessions;
 use minerva_runtime::shell;
 
-use codex::{CodexModel, CodexStatus, LoginStatus};
 use minerva_runtime::{Runtime, RuntimeConfig};
 use plugins::{PluginInfo, PluginManager};
 use providers::{ProviderInput, ProviderView};
@@ -16,6 +14,19 @@ use sessions::{SessionInfo, SessionMessage, SessionService};
 use shell::{ShellResult, ShellSettings};
 use std::sync::Arc;
 use tauri::Manager;
+#[tauri::command]
+async fn plugin_models(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+) -> Result<Vec<plugins::PluginModel>, String> {
+    manager.models().await
+}
+#[tauri::command]
+async fn plugin_ui(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+    id: String,
+) -> Result<String, String> {
+    manager.ui_document(&id).await
+}
 #[tauri::command]
 async fn plugin_call(
     manager: tauri::State<'_, Arc<PluginManager>>,
@@ -40,6 +51,15 @@ fn run_get(
     run_id: String,
 ) -> Result<minerva_runtime::RunSnapshot, String> {
     runtime.get_run(&session_id, &run_id)
+}
+
+#[tauri::command]
+async fn harness_rpc(
+    runtime: tauri::State<'_, Arc<Runtime>>,
+    method: String,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    runtime.inner().harness_call(&method, params).await
 }
 #[tauri::command]
 fn run_cancel(
@@ -137,33 +157,6 @@ async fn delete_model_provider(
     manager.providers()?.delete(&id).await
 }
 #[tauri::command]
-async fn codex_models(
-    manager: tauri::State<'_, Arc<PluginManager>>,
-) -> Result<Vec<CodexModel>, String> {
-    manager.codex()?.models().await
-}
-#[tauri::command]
-async fn codex_status(
-    manager: tauri::State<'_, Arc<PluginManager>>,
-) -> Result<CodexStatus, String> {
-    manager.codex()?.status().await
-}
-
-#[tauri::command]
-async fn codex_quota(manager: tauri::State<'_, Arc<PluginManager>>) -> Result<CodexStatus, String> {
-    manager.codex()?.quota().await
-}
-#[tauri::command]
-async fn codex_login(manager: tauri::State<'_, Arc<PluginManager>>) -> Result<LoginStatus, String> {
-    manager.codex()?.login().await
-}
-#[tauri::command]
-async fn codex_login_status(
-    manager: tauri::State<'_, Arc<PluginManager>>,
-) -> Result<Option<LoginStatus>, String> {
-    Ok(manager.codex()?.login_status().await)
-}
-#[tauri::command]
 async fn list_plugins(
     manager: tauri::State<'_, Arc<PluginManager>>,
 ) -> Result<Vec<PluginInfo>, String> {
@@ -184,6 +177,14 @@ async fn shell_settings(
     manager: tauri::State<'_, Arc<PluginManager>>,
 ) -> Result<ShellSettings, String> {
     Ok(manager.shell()?.settings().await)
+}
+
+#[tauri::command]
+async fn set_optional_plugins_enabled(
+    manager: tauri::State<'_, Arc<PluginManager>>,
+    enabled: bool,
+) -> Result<Vec<PluginInfo>, String> {
+    manager.set_optional_enabled(enabled).await
 }
 #[tauri::command]
 async fn save_shell_settings(
@@ -250,6 +251,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             plugin_call,
+            plugin_models,
+            plugin_ui,
             run_start,
             run_get,
             run_cancel,
@@ -265,13 +268,10 @@ fn main() {
             save_model_provider,
             discover_models,
             delete_model_provider,
-            codex_models,
-            codex_status,
-            codex_quota,
-            codex_login,
-            codex_login_status,
             list_plugins,
             set_plugin_enabled,
+            set_optional_plugins_enabled,
+            harness_rpc,
             shell_settings,
             save_shell_settings,
             run_shell_command

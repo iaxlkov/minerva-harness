@@ -97,6 +97,98 @@ impl Host {
 }
 
 #[tokio::test]
+async fn base_runtime_does_not_advertise_codex() {
+    let host = Host::start().await;
+    let csrf = host.login().await;
+    let roster = host.rpc(&csrf, "list_plugins", json!({})).await;
+    assert!(!roster["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == "codex"));
+    let bootstrap: Value = host
+        .client
+        .get(format!("{}/api/v1/bootstrap", host.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!bootstrap["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c == "codex.login"));
+    for method in [
+        "codex_models",
+        "codex_status",
+        "codex_quota",
+        "codex_login",
+        "codex_login_status",
+    ] {
+        let response = host.rpc(&csrf, method, json!({})).await;
+        assert_eq!(response["ok"], false, "{method}");
+    }
+    host.close().await;
+}
+
+#[tokio::test]
+async fn optional_plugins_switch_keeps_system_services_and_validates_arguments() {
+    let host = Host::start().await;
+    let csrf = host.login().await;
+    let response = host
+        .rpc(
+            &csrf,
+            "set_optional_plugins_enabled",
+            json!({"enabled":false}),
+        )
+        .await;
+    assert_eq!(response["ok"], true);
+    for plugin in response["value"].as_array().unwrap() {
+        assert_eq!(plugin["optionalEnabled"], false);
+        assert_eq!(plugin["enabled"], plugin["canToggle"] == false);
+    }
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "set_plugin_enabled",
+            json!({"id":"plugin-manager","enabled":false})
+        )
+        .await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "set_optional_plugins_enabled",
+            json!({"enabled":"false"})
+        )
+        .await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "set_optional_plugins_enabled",
+            json!({"enabled":true,"system":true})
+        )
+        .await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "set_optional_plugins_enabled",
+            json!({"enabled":true})
+        )
+        .await["ok"],
+        true
+    );
+    host.close().await;
+}
+
+#[tokio::test]
 async fn websocket_reconnect_replaces_baseline_and_logout_revokes_open_stream() {
     let host = Host::start().await;
     let csrf = host.login().await;
@@ -246,6 +338,9 @@ async fn static_fallback_never_turns_api_or_asset_misses_into_html() {
     std::fs::write(host._dir.path().join("dist/index.html"), "<h1>Minerva</h1>").unwrap();
     let page = reqwest::get(format!("{}/chat", host.base)).await.unwrap();
     assert_eq!(page.status(), 200);
+    let policy = page.headers()["content-security-policy"].to_str().unwrap();
+    assert!(policy.contains("script-src 'self' blob:"));
+    assert!(!policy.contains("unsafe-eval"));
     assert!(page.text().await.unwrap().contains("Minerva"));
     for route in ["/api/unknown", "/plugins/missing.js", "/assets/missing.js"] {
         assert_eq!(
@@ -263,4 +358,95 @@ async fn static_fallback_never_turns_api_or_asset_misses_into_html() {
 fn local_mode_rejects_external_origins() {
     assert!(LocalApiConfig::new("http://0.0.0.0:3080", ".".into()).is_err());
     assert!(LocalApiConfig::new("https://example.com", ".".into()).is_err());
+}
+
+#[tokio::test]
+async fn harness_rpc_checks_session_ownership_and_strict_arguments() {
+    let host = Host::start().await;
+    let csrf = host.login().await;
+    for id in ["images-one", "images-two"] {
+        assert_eq!(
+            host.rpc(&csrf, "session_create", json!({"id":id})).await["ok"],
+            true
+        );
+    }
+    for method in [
+        "workspace.get",
+        "tools.list",
+        "interactions.list",
+        "context.status",
+    ] {
+        assert_eq!(
+            host.rpc(&csrf, method, json!({"sessionId":"unknown"}))
+                .await["ok"],
+            false,
+            "{method}"
+        );
+        assert_eq!(
+            host.rpc(
+                &csrf,
+                method,
+                json!({"sessionId":"images-one","extra":true})
+            )
+            .await["ok"],
+            false,
+            "{method}"
+        );
+    }
+    let upload = json!({"sessionId":"images-one","name":"pixel.png","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="});
+    let response = host.rpc(&csrf, "attachments.put", upload).await;
+    assert_eq!(response["ok"], true, "{response}");
+    let id = response["value"]["id"].as_str().unwrap();
+    let own = host
+        .rpc(
+            &csrf,
+            "attachments.get",
+            json!({"sessionId":"images-one","id":id}),
+        )
+        .await;
+    assert_eq!(own["ok"], true);
+    assert_eq!(own["value"]["mimeType"], "image/png");
+    for session in ["images-two", "missing"] {
+        assert_eq!(
+            host.rpc(
+                &csrf,
+                "attachments.get",
+                json!({"sessionId":session,"id":id})
+            )
+            .await["ok"],
+            false
+        );
+    }
+    for id in ["../context.sqlite3", "", "bad/id"] {
+        assert_eq!(
+            host.rpc(
+                &csrf,
+                "attachments.get",
+                json!({"sessionId":"images-one","id":id})
+            )
+            .await["ok"],
+            false
+        );
+    }
+    let invalid=host.rpc(&csrf,"attachments.put",json!({"sessionId":"images-one","name":"x.png","mimeType":"image/png","data":"dGV4dA=="})).await;
+    assert_eq!(invalid["ok"], false);
+    assert_eq!(
+        host.rpc(&csrf, "mcp.list", json!({"extra":true})).await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "interactions.answer",
+            json!({"sessionId":"images-two","id":"stale","decision":"allow"})
+        )
+        .await["value"],
+        false
+    );
+    assert!(host
+        .runtime
+        .harness_call("engine.start", json!({}))
+        .await
+        .is_err());
+    host.close().await;
 }
