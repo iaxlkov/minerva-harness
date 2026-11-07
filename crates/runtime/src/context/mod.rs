@@ -13,6 +13,9 @@ use std::{
 pub struct ContextService {
     db: Mutex<Connection>,
 }
+impl cordis::Service for ContextService {
+    const NAME: &'static str = "studio.context";
+}
 
 pub struct PreparedContext {
     pub system_prompt: String,

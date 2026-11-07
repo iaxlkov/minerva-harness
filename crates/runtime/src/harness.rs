@@ -1,9 +1,8 @@
-//! Host-owned service composition shared by model routes and transports.
+//! Prepared service references; built-in Cordis plugins own activation and cleanup.
 use crate::{
     context::ContextService,
-    tools::{self, InteractionBroker, ToolRegistry},
+    tools::{InteractionBroker, ToolRegistry},
 };
-use serde_json::json;
 use std::{path::Path, sync::Arc};
 
 pub struct Harness {
@@ -37,25 +36,9 @@ impl Drop for RunCleanup {
 }
 
 impl Harness {
-    pub fn open(path: &Path, local: bool) -> Result<Self, String> {
+    pub(crate) fn prepare(path: &Path, local: bool) -> Result<Self, String> {
         let context = Arc::new(ContextService::open(path)?);
         let tools = Arc::new(ToolRegistry::default());
-        if local {
-            tools::register_native(&tools)?;
-            let skills = context.clone();
-            tools.register("native.workspace", tools::ToolDefinition {
-                name: "load_skill".into(),
-                description: "Load the instructions of an available workspace skill by name".into(),
-                input_schema: json!({"type":"object","properties":{"name":{"type":"string","minLength":1}},"required":["name"],"additionalProperties":false}),
-                output_schema: json!({"type":"object","properties":{"instructions":{"type":"string"}},"required":["instructions"]}),
-                side_effect: false,
-            }, move |ctx, args| {
-                let skills = skills.clone();
-                Box::pin(async move {
-                    Ok(json!({"instructions":skills.load_skill(&ctx.session_id, args["name"].as_str().ok_or("missing skill name")?)?}))
-                })
-            })?;
-        }
         use sha2::{Digest, Sha256};
         let scope = crate::credential_store::CredentialScope::new(format!(
             "mcp-{:x}",

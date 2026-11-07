@@ -20,7 +20,16 @@ fn rejects_version_and_traversal() {
 }
 #[test]
 fn builtin_ids_are_reserved() {
-    for id in ["example", "shell", "providers", "plugin-manager"] {
+    for id in [
+        "example",
+        "shell",
+        "providers",
+        "plugin-manager",
+        "tool-runtime",
+        "context",
+        "workspace-tools",
+        "mcp",
+    ] {
         let manifest:Manifest=serde_json::from_value(serde_json::json!({"id":id,"version":"1","apiVersion":1,"backend":{"kind":"process","entry":"bin/plugin"}})).unwrap();
         assert!(manifest.validate().is_err(), "accepted builtin id {id}");
     }

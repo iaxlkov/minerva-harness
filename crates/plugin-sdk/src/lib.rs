@@ -11,6 +11,16 @@ use std::{
     collections::BTreeMap,
     path::{Component, Path},
 };
+/// Built-in mandatory plugins share their protected namespace with installed packages.
+pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
+    "plugin-manager",
+    "providers",
+    "shell",
+    "tool-runtime",
+    "context",
+    "workspace-tools",
+    "mcp",
+];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
@@ -88,7 +98,7 @@ impl Manifest {
         {
             return Err("invalid plugin id".into());
         }
-        if ["example", "shell", "providers", "plugin-manager"].contains(&self.id.as_str()) {
+        if self.id == "example" || SYSTEM_PLUGIN_IDS.contains(&self.id.as_str()) {
             return Err("plugin id is reserved for a builtin".into());
         }
         if self.version.is_empty() || self.version.len() > 100 {

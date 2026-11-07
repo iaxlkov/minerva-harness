@@ -1,4 +1,5 @@
 //! Cordis owns plugin lifetimes; the built-in manager publishes the roster service.
+mod builtin;
 use crate::providers::{ProviderPlugin, ProviderService};
 use crate::shell::{ShellPlugin, ShellService};
 use cordis::event::{observer_sync, ListenerRegistrationError};
@@ -101,58 +102,35 @@ impl ManagerService {
         let example = self.example.lock().await;
         let optional_enabled = self.external.optional_enabled();
         let tool_errors = self.tool_errors.lock().unwrap().clone();
-        let mut roster = vec![
-            PluginInfo {
-                id: "plugin-manager".into(),
-                name: "Менеджер плагинов".into(),
-                description: "Предоставляет сервис управления встроенными плагинами.".into(),
-                enabled: true,
-                requested_enabled: true,
+        let mut roster = builtin::SYSTEM
+            .iter()
+            .map(|plugin| PluginInfo {
+                id: plugin.id.into(),
+                name: plugin.name.into(),
+                description: plugin.description.into(),
+                enabled: (!plugin.local_only || self.local) && (plugin.active)(&self.context),
+                requested_enabled: !plugin.local_only || self.local,
                 optional_enabled,
                 can_toggle: false,
                 origin: "builtin".into(),
                 has_ui: false,
                 error: None,
-            },
-            PluginInfo {
-                id: "providers".into(),
-                name: "Провайдеры моделей".into(),
-                description: "Конфигурация и подключение моделей.".into(),
-                enabled: self.context.try_service::<ProviderService>().is_ok(),
-                requested_enabled: true,
-                optional_enabled,
-                can_toggle: false,
-                origin: "builtin".into(),
-                has_ui: false,
-                error: None,
-            },
-            PluginInfo {
-                id: "shell".into(),
-                name: "Командная оболочка".into(),
-                description: "Запуск команд и ограничения вывода.".into(),
-                enabled: self.local && self.context.try_service::<ShellService>().is_ok(),
-                requested_enabled: self.local,
-                optional_enabled,
-                can_toggle: false,
-                origin: "builtin".into(),
-                has_ui: false,
-                error: None,
-            },
-            PluginInfo {
-                id: "example".into(),
-                name: "Тестовый плагин".into(),
-                description: "Проверяет запуск, события и отключение в Cordis.".into(),
-                enabled: example
-                    .as_ref()
-                    .is_some_and(|handle| handle.state() == FiberState::Active),
-                requested_enabled: self.external.example_enabled(),
-                optional_enabled,
-                can_toggle: true,
-                origin: "builtin".into(),
-                has_ui: false,
-                error: None,
-            },
-        ];
+            })
+            .collect::<Vec<_>>();
+        roster.push(PluginInfo {
+            id: "example".into(),
+            name: "Тестовый плагин".into(),
+            description: "Проверяет запуск, события и отключение в Cordis.".into(),
+            enabled: example
+                .as_ref()
+                .is_some_and(|handle| handle.state() == FiberState::Active),
+            requested_enabled: self.external.example_enabled(),
+            optional_enabled,
+            can_toggle: true,
+            origin: "builtin".into(),
+            has_ui: false,
+            error: None,
+        });
         roster.extend(self.external.roster().into_iter().map(|entry| {
             if !entry.enabled {
                 self.harness
@@ -186,7 +164,10 @@ impl ManagerService {
         if self.closing.load(Ordering::SeqCst) {
             return Err("Plugin manager is shutting down".into());
         }
-        if id != "example" && !["plugin-manager", "providers", "shell"].contains(&id) {
+        if builtin::SYSTEM.iter().any(|plugin| plugin.id == id) {
+            return Err("System plugins cannot be toggled".into());
+        }
+        if id != "example" {
             if !enabled
                 || !self
                     .external
@@ -198,9 +179,6 @@ impl ManagerService {
             }
             self.external.set_enabled(id, enabled).await?;
             return Ok(self.list().await);
-        }
-        if id != "example" {
-            return Err("Управление этим плагином недоступно.".into());
         }
         self.external.set_example_enabled(enabled).await?;
         self.set_example_active(enabled && self.external.optional_enabled())
@@ -224,14 +202,8 @@ impl ManagerService {
         let example = self
             .set_example_active(self.external.optional_enabled() && self.external.example_enabled())
             .await;
-        let mcp = self
-            .harness
-            .mcp
-            .set_paused(!self.external.optional_enabled())
-            .await;
         external?;
         example?;
-        mcp?;
         Ok(self.list().await)
     }
     async fn set_example_active(&self, enabled: bool) -> Result<(), String> {
@@ -252,7 +224,6 @@ impl ManagerService {
     async fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
         let _lifecycle = self.lifecycle.lock().await;
-        self.harness.mcp.shutdown().await;
         self.external.shutdown().await;
         if let Some(handle) = self.example.lock().await.take() {
             let _ = handle.dispose().await;
@@ -280,9 +251,7 @@ impl Plugin for ManagerPlugin {
 pub struct PluginManager {
     pub harness: Arc<crate::harness::Harness>,
     context: Context,
-    manager: FiberHandle,
-    shell: FiberHandle,
-    providers: FiberHandle,
+    builtins: Vec<FiberHandle>,
     #[cfg(test)]
     example_events: Arc<AtomicUsize>,
 }
@@ -315,7 +284,7 @@ impl PluginManager {
         scope: crate::credential_store::CredentialScope,
         context_path: PathBuf,
     ) -> Result<Self, String> {
-        let harness = Arc::new(crate::harness::Harness::open(&context_path, local)?);
+        let harness = Arc::new(crate::harness::Harness::prepare(&context_path, local)?);
         let external = Arc::new(minerva_plugin_host::Host::open(
             settings_path
                 .parent()
@@ -354,11 +323,45 @@ impl PluginManager {
         });
         let mut started = Vec::new();
         let result = async {
-            harness
-                .mcp
-                .set_paused(!service.external.optional_enabled())
-                .await?;
-            harness.mcp.start().await;
+            started.push(
+                context
+                    .spawn(PreparedPlugin::from_input(
+                        builtin::ToolRuntimePlugin {
+                            tools: harness.tools.clone(),
+                            interactions: harness.interactions.clone(),
+                        },
+                        (),
+                    ))
+                    .await
+                    .map_err(|e| e.to_string())?,
+            );
+            started.push(
+                context
+                    .spawn(PreparedPlugin::from_input(
+                        builtin::ContextPlugin(harness.context.clone()),
+                        (),
+                    ))
+                    .await
+                    .map_err(|e| e.to_string())?,
+            );
+            started.push(
+                context
+                    .spawn(PreparedPlugin::from_input(
+                        builtin::WorkspaceToolsPlugin(local),
+                        (),
+                    ))
+                    .await
+                    .map_err(|e| e.to_string())?,
+            );
+            started.push(
+                context
+                    .spawn(PreparedPlugin::from_input(
+                        builtin::McpPlugin(harness.mcp.clone()),
+                        (),
+                    ))
+                    .await
+                    .map_err(|e| e.to_string())?,
+            );
             let manager = context
                 .spawn(PreparedPlugin::from_input(
                     ManagerPlugin {
@@ -387,11 +390,11 @@ impl PluginManager {
                 .await
                 .map_err(|e| e.to_string())?;
             started.push(providers.clone());
-            Ok::<_, String>((manager, shell, providers))
+            Ok::<_, String>(())
         }
         .await;
-        let (manager, shell, providers) = match result {
-            Ok(value) => value,
+        match result {
+            Ok(()) => {}
             Err(error) => {
                 service.shutdown().await;
                 for handle in started.iter().rev() {
@@ -403,9 +406,7 @@ impl PluginManager {
         Ok(Self {
             harness,
             context,
-            manager,
-            shell,
-            providers,
+            builtins: started,
             #[cfg(test)]
             example_events,
         })
@@ -523,9 +524,9 @@ impl PluginManager {
         if let Ok(service) = self.service() {
             service.shutdown().await;
         }
-        let _ = self.providers.dispose().await;
-        let _ = self.shell.dispose().await;
-        let _ = self.manager.dispose().await;
+        for plugin in self.builtins.iter().rev() {
+            let _ = plugin.dispose().await;
+        }
     }
     #[cfg(test)]
     async fn probe(&self) -> usize {

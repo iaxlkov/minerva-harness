@@ -12,6 +12,9 @@ pub struct InteractionBroker {
     pending: Mutex<BTreeMap<String, Pending>>,
     next: AtomicU64,
 }
+impl cordis::Service for InteractionBroker {
+    const NAME: &'static str = "studio.interactions";
+}
 impl InteractionBroker {
     pub fn list(&self, session_id: &str) -> Vec<PendingInteraction> {
         self.pending

@@ -104,6 +104,9 @@ struct Registration {
 }
 #[derive(Default)]
 pub struct ToolRegistry(Mutex<BTreeMap<String, Arc<Registration>>>);
+impl cordis::Service for ToolRegistry {
+    const NAME: &'static str = "studio.tools";
+}
 #[derive(Clone, Default)]
 pub struct AdmittedTools(BTreeMap<String, Arc<Registration>>, IdentityHook);
 impl ToolRegistry {

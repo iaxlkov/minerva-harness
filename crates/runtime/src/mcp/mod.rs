@@ -49,6 +49,9 @@ pub struct McpManager {
     edits: tokio::sync::Mutex<()>,
     paused: AtomicBool,
 }
+impl cordis::Service for McpManager {
+    const NAME: &'static str = "studio.mcp";
+}
 impl McpManager {
     pub fn new(
         path: PathBuf,
