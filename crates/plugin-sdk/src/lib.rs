@@ -20,6 +20,8 @@ pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "context",
     "workspace-tools",
     "mcp",
+    "sessions",
+    "agent-loop",
 ];
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

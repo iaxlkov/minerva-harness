@@ -2,12 +2,7 @@
 use cordis::{Context, Plugin, Service};
 use serde::{Deserialize, Serialize};
 use std::{
-    convert::Infallible,
-    fs::{self, File},
-    io::Read,
-    path::PathBuf,
-    process::Stdio,
-    sync::Arc,
+    convert::Infallible, fs::File, io::Read, path::PathBuf, process::Stdio, sync::Arc,
     time::Duration,
 };
 use tokio::sync::Mutex;
@@ -52,7 +47,7 @@ pub struct ShellResult {
 }
 
 pub struct ShellService {
-    path: PathBuf,
+    config: minerva_plugin_host::config::ConfigStore,
     settings: Mutex<ShellSettings>,
 }
 impl Service for ShellService {
@@ -60,18 +55,16 @@ impl Service for ShellService {
 }
 impl ShellService {
     pub fn new(path: PathBuf) -> Result<Self, String> {
-        let settings = match fs::read(&path) {
-            Ok(data) => {
-                let value: ShellSettings = serde_json::from_slice(&data)
-                    .map_err(|e| format!("Ошибка чтения настроек оболочки: {e}"))?;
-                value.validate()?;
-                value
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ShellSettings::default(),
-            Err(e) => return Err(format!("Ошибка чтения настроек оболочки: {e}")),
+        let config = minerva_plugin_host::config::ConfigStore::open(
+            path.parent().ok_or("Не задан каталог настроек.")?,
+        )?;
+        let saved = config.snapshot()?.services.shell;
+        let settings = ShellSettings {
+            timeout_ms: saved.timeout_ms,
+            max_output_bytes: saved.max_output_bytes,
         };
         Ok(Self {
-            path,
+            config,
             settings: Mutex::new(settings),
         })
     }
@@ -81,13 +74,11 @@ impl ShellService {
     pub async fn save(&self, value: ShellSettings) -> Result<ShellSettings, String> {
         value.validate()?;
         let mut current = self.settings.lock().await;
-        let dir = self.path.parent().ok_or("Не задан каталог настроек.")?;
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let mut temporary = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
-        serde_json::to_writer_pretty(&mut temporary, &value).map_err(|e| e.to_string())?;
-        temporary
-            .persist(&self.path)
-            .map_err(|e| format!("Не удалось сохранить настройки: {e}"))?;
+        self.config.update(|config| {
+            config.services.shell.timeout_ms = value.timeout_ms;
+            config.services.shell.max_output_bytes = value.max_output_bytes;
+            Ok(())
+        })?;
         *current = value.clone();
         Ok(value)
     }
@@ -190,6 +181,40 @@ impl Plugin for ShellPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    #[tokio::test]
+    async fn saves_shared_config_without_losing_plugin_selection_or_run_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = minerva_plugin_host::config::ConfigStore::open(dir.path()).unwrap();
+        config
+            .update(|value| {
+                value.optional_plugins_enabled = false;
+                value.services.agent_loop.shutdown_timeout_ms = 100;
+                Ok(())
+            })
+            .unwrap();
+        let shell = ShellService::new(dir.path().join("shell.json")).unwrap();
+        shell
+            .save(ShellSettings {
+                timeout_ms: 1234,
+                max_output_bytes: 2048,
+            })
+            .await
+            .unwrap();
+        let saved = config.snapshot().unwrap();
+        assert!(!saved.optional_plugins_enabled);
+        assert_eq!(saved.services.agent_loop.shutdown_timeout_ms, 100);
+        assert_eq!(saved.services.shell.timeout_ms, 1234);
+        assert!(!dir.path().join("shell.json").exists());
+        assert_eq!(
+            ShellService::new(dir.path().join("shell.json"))
+                .unwrap()
+                .settings()
+                .await
+                .max_output_bytes,
+            2048
+        );
+    }
     #[tokio::test]
     async fn saves_settings_and_runs_with_bounded_output() {
         let dir = tempfile::tempdir().unwrap();

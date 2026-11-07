@@ -251,22 +251,11 @@ pub(crate) async fn dispatch(
         }
         "session_run" => {
             let a: Run = args(params)?;
-            // A dropped HTTP request drops only this JoinHandle, never the task.
-            let task = tokio::spawn(async move {
-                conversation::run(
-                    &runtime.sessions,
-                    &runtime.plugins,
-                    &runtime.runs,
-                    &a.id,
-                    a.request,
-                )
-                .await
-            });
-            encoded(task.await.map_err(|_| DispatchError::Internal)??)
+            encoded(runtime.run_legacy(a.id, a.request).await?)
         }
         "session_cancel" => {
             let a: Cancel = args(params)?;
-            encoded(runtime.runs.cancel(&a.id, &a.run_id)?)
+            encoded(runtime.cancel_run(&a.id, &a.run_id)?)
         }
         "model_providers" => {
             let _: Empty = args(params)?;

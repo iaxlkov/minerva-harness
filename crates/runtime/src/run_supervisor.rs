@@ -1,10 +1,61 @@
 use crate::{
     conversation::{run_inner, RunRequest},
+    plugins::PluginManager,
+    runs::Runs,
     sessions::ContentPart,
+    sessions::SessionService,
     Runtime,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use tokio::sync::Mutex;
+
+pub struct AgentLoopService {
+    sessions: Arc<SessionService>,
+    plugins: Weak<PluginManager>,
+    runs: Runs,
+    stopped: Mutex<bool>,
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    shutdown_timeout: std::time::Duration,
+}
+impl cordis::Service for AgentLoopService {
+    const NAME: &'static str = "studio.agent-loop";
+}
+impl AgentLoopService {
+    pub(crate) fn new(
+        sessions: Arc<SessionService>,
+        plugins: Weak<PluginManager>,
+        shutdown_timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            sessions,
+            plugins,
+            runs: Runs::default(),
+            stopped: Mutex::new(false),
+            tasks: Mutex::new(Vec::new()),
+            shutdown_timeout,
+        }
+    }
+    pub async fn is_stopped(&self) -> bool {
+        *self.stopped.lock().await
+    }
+    pub(crate) async fn shutdown(&self) {
+        let mut stopped = self.stopped.lock().await;
+        if *stopped {
+            return;
+        }
+        *stopped = true;
+        self.runs.cancel_all();
+        let mut tasks = self.tasks.lock().await;
+        let deadline = tokio::time::Instant::now() + self.shutdown_timeout;
+        for mut task in tasks.drain(..) {
+            if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
@@ -42,15 +93,16 @@ pub struct RunSnapshot {
     pub parts: Vec<ContentPart>,
     pub error: Option<String>,
 }
-impl Runtime {
-    pub async fn start_run(
-        self: &Arc<Self>,
-        mut request: StartRunRequest,
-    ) -> Result<RunHandle, String> {
+impl AgentLoopService {
+    pub async fn start_run(&self, mut request: StartRunRequest) -> Result<RunHandle, String> {
         let stopped = self.stopped.lock().await;
         if *stopped {
             return Err("runtime is stopped".into());
         }
+        let plugins = self
+            .plugins
+            .upgrade()
+            .ok_or("plugin services are stopped")?;
         self.sessions.get(&request.session_id)?;
         if let Some(value) = request.options.get("attachments") {
             let supplied: Vec<minerva_plugin_sdk::context::AttachmentRef> =
@@ -62,8 +114,7 @@ impl Runtime {
             let mut total = 0usize;
             let mut canonical = Vec::new();
             for reference in supplied {
-                let stored = self
-                    .plugins
+                let stored = plugins
                     .harness
                     .context
                     .get_attachment(&request.session_id, &reference.id)?;
@@ -102,9 +153,9 @@ impl Runtime {
                 return Err(e);
             }
         };
-        let runtime = Arc::clone(self);
+        let sessions = self.sessions.clone();
         let settlement = OwnedSettlement {
-            store: runtime.sessions.clone(),
+            store: sessions.clone(),
             session: request.session_id.clone(),
             id: request.request_id.clone(),
         };
@@ -119,20 +170,10 @@ impl Runtime {
                 created_at,
                 options: request.options,
             };
-            let result = run_inner(
-                &runtime.sessions,
-                &runtime.plugins,
-                &session,
-                execution,
-                &mut guard,
-                true,
-            )
-            .await;
+            let result =
+                run_inner(&sessions, &plugins, &session, execution, &mut guard, true).await;
             if let Err(error) = result {
-                let _ =
-                    runtime
-                        .sessions
-                        .fail_run(&session, &run_id, *guard.cancel.borrow(), &error);
+                let _ = sessions.fail_run(&session, &run_id, *guard.cancel.borrow(), &error);
             }
         }));
         Ok(handle)
@@ -142,6 +183,55 @@ impl Runtime {
     }
     pub fn cancel_run(&self, session: &str, run_id: &str) -> Result<bool, String> {
         self.runs.cancel(session, run_id)
+    }
+    pub async fn run_legacy(
+        &self,
+        session: String,
+        request: RunRequest,
+    ) -> Result<crate::conversation::SessionRunResult, String> {
+        let stopped = self.stopped.lock().await;
+        if *stopped {
+            return Err("runtime is stopped".into());
+        }
+        let plugins = self
+            .plugins
+            .upgrade()
+            .ok_or("plugin services are stopped")?;
+        let sessions = self.sessions.clone();
+        let mut guard = self.runs.acquire(&session, &request.response_id)?;
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let mut tasks = self.tasks.lock().await;
+        tasks.retain(|task| !task.is_finished());
+        tasks.push(tokio::spawn(async move {
+            let result = run_inner(&sessions, &plugins, &session, request, &mut guard, false).await;
+            let _ = send.send(result);
+        }));
+        drop(tasks);
+        drop(stopped);
+        receive
+            .await
+            .map_err(|_| "run task interrupted before settlement".to_string())?
+    }
+}
+impl Runtime {
+    pub async fn start_run(
+        self: &Arc<Self>,
+        request: StartRunRequest,
+    ) -> Result<RunHandle, String> {
+        self.agent_loop.start_run(request).await
+    }
+    pub fn get_run(&self, session: &str, run_id: &str) -> Result<RunSnapshot, String> {
+        self.agent_loop.get_run(session, run_id)
+    }
+    pub fn cancel_run(&self, session: &str, run_id: &str) -> Result<bool, String> {
+        self.agent_loop.cancel_run(session, run_id)
+    }
+    pub async fn run_legacy(
+        &self,
+        session: String,
+        request: RunRequest,
+    ) -> Result<crate::conversation::SessionRunResult, String> {
+        self.agent_loop.run_legacy(session, request).await
     }
 }
 
@@ -158,5 +248,40 @@ impl Drop for OwnedSettlement {
             false,
             "run task interrupted before settlement",
         );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[tokio::test]
+    async fn shutdown_aborts_and_joins_noncooperative_tasks_after_configured_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions =
+            Arc::new(SessionService::open(&dir.path().join("sessions.sqlite3")).unwrap());
+        let service = AgentLoopService::new(
+            sessions.clone(),
+            Weak::new(),
+            std::time::Duration::from_millis(100),
+        );
+        let guard = service.runs.acquire("session", "run").unwrap();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        service.tasks.lock().await.push(tokio::spawn(async move {
+            let _guard = guard;
+            let _ = send.send(());
+            std::future::pending::<()>().await;
+        }));
+        receive.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), service.shutdown())
+            .await
+            .unwrap();
+        assert!(service.is_stopped().await);
+        assert!(service.tasks.lock().await.is_empty());
+        assert!(
+            service.runs.acquire("session", "next").is_ok(),
+            "aborted task retained its run guard"
+        );
+        service.shutdown().await;
+        sessions.shutdown().unwrap();
     }
 }

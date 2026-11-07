@@ -3,7 +3,6 @@
 use minerva_runtime::conversation;
 use minerva_runtime::plugins;
 use minerva_runtime::providers;
-use minerva_runtime::runs;
 use minerva_runtime::sessions;
 use minerva_runtime::shell;
 
@@ -113,21 +112,19 @@ fn session_set_model(
 }
 #[tauri::command]
 async fn session_run(
-    store: tauri::State<'_, Arc<SessionService>>,
-    manager: tauri::State<'_, Arc<PluginManager>>,
-    runs: tauri::State<'_, Arc<runs::Runs>>,
+    runtime: tauri::State<'_, Arc<Runtime>>,
     id: String,
     request: conversation::RunRequest,
 ) -> Result<conversation::SessionRunResult, String> {
-    conversation::run(&store, &manager, &runs, &id, request).await
+    runtime.run_legacy(id, request).await
 }
 #[tauri::command]
 fn session_cancel(
-    runs: tauri::State<'_, Arc<runs::Runs>>,
+    runtime: tauri::State<'_, Arc<Runtime>>,
     id: String,
     run_id: String,
 ) -> Result<bool, String> {
-    runs.cancel(&id, &run_id)
+    runtime.cancel_run(&id, &run_id)
 }
 #[tauri::command]
 async fn model_providers(
@@ -245,7 +242,6 @@ fn main() {
             ))?);
             app.manage(runtime.sessions.clone());
             app.manage(runtime.plugins.clone());
-            app.manage(runtime.runs.clone());
             app.manage(runtime);
             Ok(())
         })

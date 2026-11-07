@@ -22,3 +22,4 @@ releases/
 auth.json
 providers.json
 shell.json
+minerva.conf.json

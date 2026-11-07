@@ -19,6 +19,20 @@ fn published<T: Service>(ctx: &Context) -> bool {
 }
 pub(super) const SYSTEM: &[SystemPlugin] = &[
     SystemPlugin {
+        id: "sessions",
+        name: "Сессии",
+        description: "Хранение истории и событий диалога.",
+        local_only: false,
+        active: published::<crate::sessions::SessionService>,
+    },
+    SystemPlugin {
+        id: "agent-loop",
+        name: "Выполнение диалога",
+        description: "Запуск, отмена и завершение ходов диалога.",
+        local_only: false,
+        active: published::<crate::run_supervisor::AgentLoopService>,
+    },
+    SystemPlugin {
         id: "plugin-manager",
         name: "Менеджер плагинов",
         description: "Управление встроенными и установленными плагинами.",

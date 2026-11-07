@@ -110,6 +110,8 @@ fn cleanup_stage(path: &Path, plugins: &Path) -> Result<(), String> {
 }
 pub fn install_local(source: &Path, config: &Path) -> Result<String, String> {
     let guard = WriterGuard::acquire(config)?;
+    let composition = config::ConfigStore::at(config);
+    composition.open_locked(&guard)?;
     let package = Package::load(source)?;
     fs::create_dir_all(config.join("plugins")).map_err(err)?;
     if config.join("plugins").canonicalize().map_err(err)?.parent()
@@ -139,6 +141,16 @@ pub fn install_local(source: &Path, config: &Path) -> Result<String, String> {
         }
         fs::rename(&stage, &target).map_err(err)?;
         let locked = (|| {
+            composition.update_locked(
+                |c| {
+                    c.plugins.insert(
+                        package.manifest.id.clone(),
+                        config::PluginConfig { enabled: false },
+                    );
+                    Ok(())
+                },
+                &guard,
+            )?;
             let mut lock = read_lock(config)?;
             lock.plugins.insert(
                 package.manifest.id.clone(),

@@ -65,6 +65,7 @@ pub use minerva_plugin_sdk::engine::Turn;
 #[derive(Clone)]
 pub struct SessionService {
     store: std::sync::Arc<SessionStore>,
+    shutdown_result: std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>,
 }
 impl SessionService {
     pub fn baseline(&self, session: &str) -> Result<SessionBaseline, String> {
@@ -112,11 +113,22 @@ impl SessionService {
         self.store.run_snapshot(session, id)
     }
     pub fn shutdown(&self) -> Result<(), String> {
-        self.store.shutdown()
+        let mut outcome = self.shutdown_result.lock().map_err(|e| e.to_string())?;
+        let result = self.store.shutdown();
+        *outcome = Some(result.clone());
+        result
+    }
+    pub(crate) fn shutdown_result(&self) -> Result<(), String> {
+        self.shutdown_result
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .unwrap_or_else(|| Err("Session service cleanup did not complete".into()))
     }
     pub fn open(path: &Path) -> Result<Self, String> {
         Ok(Self {
             store: std::sync::Arc::new(SessionStore::open(path)?),
+            shutdown_result: Default::default(),
         })
     }
     pub fn create(&self, id: &str) -> Result<(), String> {

@@ -17,6 +17,7 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
     time::timeout,
 };
+pub mod config;
 mod graph;
 mod package;
 mod process;
@@ -109,6 +110,7 @@ pub struct Host {
 impl Host {
     /// Hosted mode is deliberately disabled until a sandbox execution provider is integrated.
     pub fn open(config: PathBuf, local: bool) -> Result<Self, String> {
+        let composition = config::ConfigStore::open(&config)?.snapshot()?;
         let lock = read_lock(&config)?;
         let mut entries = BTreeMap::new();
         let dir = config.join("plugins");
@@ -137,7 +139,14 @@ impl Host {
                 );
             }
         }
-        for id in lock.plugins.keys() {
+        for id in lock
+            .plugins
+            .keys()
+            .chain(composition.plugins.keys().filter(|id| {
+                id.as_str() != "example"
+                    && !minerva_plugin_sdk::SYSTEM_PLUGIN_IDS.contains(&id.as_str())
+            }))
+        {
             entries.entry(id.clone()).or_insert_with(|| Entry {
                 state: Mutex::new(State {
                     error: Some("plugin package missing".into()),
@@ -148,11 +157,13 @@ impl Host {
         }
         for (id, entry) in &entries {
             entry.state.lock().unwrap().requested_enabled =
-                lock.plugins.get(id).is_some_and(|p| p.enabled);
+                composition.plugins.get(id).is_some_and(|p| p.enabled);
         }
         Ok(Self {
-            optional: std::sync::atomic::AtomicBool::new(lock.optional_enabled),
-            example: std::sync::atomic::AtomicBool::new(lock.example_enabled),
+            optional: std::sync::atomic::AtomicBool::new(composition.optional_plugins_enabled),
+            example: std::sync::atomic::AtomicBool::new(
+                composition.plugins.get("example").is_none_or(|p| p.enabled),
+            ),
             lifecycle: tokio::sync::Mutex::new(()),
             config,
             entries,
@@ -210,9 +221,14 @@ impl Host {
     }
     pub async fn set_example_enabled(&self, enabled: bool) -> Result<(), String> {
         let guard = WriterGuard::acquire_async(self.config.clone()).await?;
-        let mut lock = read_lock(&self.config)?;
-        lock.example_enabled = enabled;
-        persist(&self.config, &lock, &guard)?;
+        config::ConfigStore::at(&self.config).update_locked(
+            |c| {
+                c.plugins
+                    .insert("example".into(), config::PluginConfig { enabled });
+                Ok(())
+            },
+            &guard,
+        )?;
         self.example
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
         Ok(())
@@ -221,9 +237,13 @@ impl Host {
         let _lifecycle = self.lifecycle.lock().await;
         {
             let guard = WriterGuard::acquire_async(self.config.clone()).await?;
-            let mut lock = read_lock(&self.config)?;
-            lock.optional_enabled = enabled;
-            persist(&self.config, &lock, &guard)?;
+            config::ConfigStore::at(&self.config).update_locked(
+                |c| {
+                    c.optional_plugins_enabled = enabled;
+                    Ok(())
+                },
+                &guard,
+            )?;
         }
         self.optional
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
@@ -236,22 +256,32 @@ impl Host {
         {
             let guard = WriterGuard::acquire_async(self.config.clone()).await?;
             let mut lock = read_lock(&self.config)?;
-            let digest = entry
-                .state
-                .lock()
-                .unwrap()
-                .package
-                .as_ref()
-                .map(|p| p.digest.clone())
-                .unwrap_or_default();
-            lock.plugins
-                .entry(id.into())
-                .or_insert(Locked {
-                    digest,
-                    enabled: false,
-                })
-                .enabled = enabled;
-            persist(&self.config, &lock, &guard)?;
+            if !lock.plugins.contains_key(id) {
+                let digest = entry
+                    .state
+                    .lock()
+                    .unwrap()
+                    .package
+                    .as_ref()
+                    .map(|p| p.digest.clone())
+                    .unwrap_or_default();
+                lock.plugins.insert(
+                    id.into(),
+                    Locked {
+                        digest,
+                        enabled: false,
+                    },
+                );
+                persist(&self.config, &lock, &guard)?;
+            }
+            config::ConfigStore::at(&self.config).update_locked(
+                |c| {
+                    c.plugins
+                        .insert(id.into(), config::PluginConfig { enabled });
+                    Ok(())
+                },
+                &guard,
+            )?;
         }
         entry.state.lock().unwrap().requested_enabled = enabled;
         self.reconcile().await?;

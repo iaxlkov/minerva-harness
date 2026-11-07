@@ -256,6 +256,9 @@ pub struct PluginManager {
     example_events: Arc<AtomicUsize>,
 }
 impl PluginManager {
+    pub(crate) fn context(&self) -> &Context {
+        &self.context
+    }
     pub async fn start(settings_path: PathBuf) -> Result<Self, String> {
         Self::start_with_external_plugins(settings_path, true).await
     }
@@ -876,7 +879,11 @@ mod tests {
                 assert!(!entry.enabled);
                 assert!(entry.requested_enabled);
             } else {
-                assert!(entry.enabled);
+                // This harness-only fixture does not compose session execution.
+                assert_eq!(
+                    entry.enabled,
+                    !["sessions", "agent-loop"].contains(&entry.id.as_str())
+                );
                 assert!(manager.set_enabled(&entry.id, false).await.is_err());
             }
         }

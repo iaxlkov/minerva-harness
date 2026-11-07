@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "optionalPluginsEnabled": true,
+  "plugins": {
+    "example": { "enabled": false },
+    "codex": { "enabled": true }
+  },
+  "services": {
+    "shell": { "timeoutMs": 120000, "maxOutputBytes": 64000 },
+    "agent-loop": { "shutdownTimeoutMs": 5000 }
+  }
+}

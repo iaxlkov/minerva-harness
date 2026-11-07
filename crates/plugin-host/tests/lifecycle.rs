@@ -2,6 +2,38 @@ use minerva_plugin_host::{install_local, Host};
 use serde_json::json;
 
 #[test]
+fn installing_preselected_missing_package_keeps_it_disabled() {
+    use minerva_plugin_host::config::{ConfigStore, PluginConfig};
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let source = temp.path().join("source");
+    let store = ConfigStore::open(&config).unwrap();
+    store
+        .update(|c| {
+            c.plugins
+                .insert("test.new".into(), PluginConfig { enabled: true });
+            c.plugins
+                .insert("test.other".into(), PluginConfig { enabled: true });
+            Ok(())
+        })
+        .unwrap();
+    make_fixture_package(&source, "test.new");
+    install_local(&source, &config).unwrap();
+    let snapshot = store.snapshot().unwrap();
+    assert!(!snapshot.plugins["test.new"].enabled);
+    assert!(snapshot.plugins["test.other"].enabled);
+    let host = Host::open(config, true).unwrap();
+    assert!(
+        !host
+            .roster()
+            .iter()
+            .find(|p| p.id == "test.new")
+            .unwrap()
+            .requested_enabled
+    );
+}
+
+#[test]
 fn broken_package_does_not_abort_discovery() {
     let temp = tempfile::tempdir().unwrap();
     let broken = temp.path().join("plugins/test.broken");
@@ -24,7 +56,7 @@ async fn restore_isolates_bad_packages_and_retry_revalidates() {
         make_fixture_package(&source, id);
         install_local(&source, &config).unwrap();
     }
-    let lock_path = config.join("plugin-lock.json");
+    let lock_path = config.join("minerva.conf.json");
     let mut lock: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&lock_path).unwrap()).unwrap();
     for entry in lock["plugins"].as_object_mut().unwrap().values_mut() {
@@ -121,7 +153,7 @@ async fn failed_initialize_does_not_suppress_restoration_of_healthy_plugin() {
     assert_eq!(roster[0].error.as_deref(), Some("incompatible handshake"));
     assert!(roster[1].enabled);
     let lock: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(config.join("plugin-lock.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(config.join("minerva.conf.json")).unwrap()).unwrap();
     assert_eq!(lock["plugins"]["test.bad"]["enabled"], true);
     host.shutdown().await;
 }
@@ -415,6 +447,8 @@ async fn installer_and_stale_host_merge_persisted_state() {
     let lock: serde_json::Value =
         serde_json::from_slice(&std::fs::read(config.join("plugin-lock.json")).unwrap()).unwrap();
     assert_eq!(lock["plugins"].as_object().unwrap().len(), 3);
+    let lock: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(config.join("minerva.conf.json")).unwrap()).unwrap();
     assert_eq!(lock["plugins"]["test.first"]["enabled"], true);
     assert_eq!(lock["plugins"]["test.second"]["enabled"], false);
 }
@@ -584,7 +618,7 @@ async fn invalid_service_graphs_are_diagnostic_and_never_execute() {
             std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
             install_local(&source, &config).unwrap();
         }
-        let lock_path = config.join("plugin-lock.json");
+        let lock_path = config.join("minerva.conf.json");
         let mut lock: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&lock_path).unwrap()).unwrap();
         for plugin in lock["plugins"].as_object_mut().unwrap().values_mut() {
