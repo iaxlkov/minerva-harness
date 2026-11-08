@@ -5,6 +5,10 @@ export class WorkspacesModel extends Store<WorkspaceInfo[]> {
  private invoke:Invoke;
  constructor(invoke:Invoke){super([]);this.invoke=invoke;}
  refresh=()=>this.load(()=>this.invoke('workspaces.list'));
+ async setSessionState(id:string,pinned:boolean,archived:boolean){
+  const generation=this.generation;await this.invoke('sessions.state',{id,pinned,archived});
+  if(generation!==this.generation)throw Error('Client scope changed');await this.refresh();
+ }
  async rename(id:string,title:string){
   const generation=this.generation;
   await this.invoke('workspaces.rename',{id,title});

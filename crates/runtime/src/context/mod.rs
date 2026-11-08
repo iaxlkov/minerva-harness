@@ -37,6 +37,7 @@ impl ContextService {
             CREATE TABLE IF NOT EXISTS selected_skills (session TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(session,name));
             CREATE TABLE IF NOT EXISTS summaries (session TEXT PRIMARY KEY, prefix TEXT NOT NULL, summary TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, session TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL);").map_err(|e|e.to_string())?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS attachment_access(session TEXT NOT NULL,attachment TEXT NOT NULL REFERENCES attachments(id),PRIMARY KEY(session,attachment));").map_err(|e|e.to_string())?;
         crate::workspaces::migrate(&db)?;
         Ok(Self { db: Mutex::new(db) })
     }

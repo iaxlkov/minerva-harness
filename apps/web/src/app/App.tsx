@@ -25,11 +25,12 @@ export function App() {
       if(!workspaceId&&session&&!currentWorkspace)throw Error('Не удалось определить workspace текущего диалога.');
       workspaceId??=currentWorkspace??'default';
       const target=workspaces.find(item=>item.id===workspaceId);
-      const draftId=workspaceId===currentWorkspace?session?.id:models.sessions.getSnapshot().find(item=>item.hasMessages===false&&target?.sessionIds.includes(item.id))?.id;
+      const archived=new Set(target?.archivedSessionIds??[]);
+      const draftId=workspaceId===currentWorkspace&&!archived.has(session?.id??'')?session?.id:models.sessions.getSnapshot().find(item=>item.hasMessages===false&&!archived.has(item.id)&&target?.sessionIds.includes(item.id))?.id;
       const item=await models.sessions.create(model,workspaceId,draftId);setSession(item);
     }catch(error){setSessionError(`Не удалось создать диалог: ${String(error)}`);}finally{creatingSession.current=false;}
   }
-  useEffect(()=>{if(initialized.current)return;initialized.current=true;void (async()=>{try{await models.sessions.refresh();await models.workspaces.refresh();const visible=new Set(models.workspaces.getSnapshot().flatMap(item=>item.sessionIds));const list=models.sessions.getSnapshot().filter(item=>visible.has(item.id));if(list.length){const initial=list.find(item=>item.hasMessages!==false)??list[0];setSession(initial);setModel(initial.model||'');}else await createSession();}catch(error){setSessionError(`Не удалось загрузить историю: ${String(error)}`);}finally{setSessionLoading(false);}})();},[]);
+  useEffect(()=>{if(initialized.current)return;initialized.current=true;void (async()=>{try{await models.sessions.refresh();await models.workspaces.refresh();const visible=new Set(models.workspaces.getSnapshot().flatMap(item=>item.sessionIds.filter(id=>!(item.archivedSessionIds??[]).includes(id))));const list=models.sessions.getSnapshot().filter(item=>visible.has(item.id));if(list.length){const initial=list.find(item=>item.hasMessages!==false)??list[0];setSession(initial);setModel(initial.model||'');}else await createSession();}catch(error){setSessionError(`Не удалось загрузить историю: ${String(error)}`);}finally{setSessionLoading(false);}})();},[]);
   const providers=React.useSyncExternalStore(models.providers.subscribe,models.providers.getSnapshot);
   const setProviders=models.providers.set;
   const [model,setModel]=useState('');

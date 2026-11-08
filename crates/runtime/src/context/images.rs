@@ -83,7 +83,7 @@ impl ContextService {
         let (name, mime_type, data): (String, String, Vec<u8>) = self
             .db()?
             .query_row(
-                "SELECT name,mime,data FROM attachments WHERE session=?1 AND id=?2",
+                "SELECT name,mime,data FROM attachments WHERE id=?2 AND (session=?1 OR EXISTS(SELECT 1 FROM attachment_access WHERE session=?1 AND attachment=?2))",
                 params![session, id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )

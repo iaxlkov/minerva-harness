@@ -20,11 +20,14 @@ pub struct WorkspaceInfo {
     pub path: Option<String>,
     pub session_ids: Vec<String>,
     pub missing: bool,
+    pub pinned_session_ids: Vec<String>,
+    pub archived_session_ids: Vec<String>,
 }
 
 pub(crate) fn migrate(db: &Connection) -> Result<(), String> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,title TEXT NOT NULL,path TEXT,path_key TEXT UNIQUE);
         CREATE TABLE IF NOT EXISTS hidden_projects(id TEXT PRIMARY KEY REFERENCES projects(id));
+        CREATE TABLE IF NOT EXISTS session_navigation(session TEXT PRIMARY KEY,pinned INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS project_sessions(session TEXT PRIMARY KEY,project TEXT NOT NULL REFERENCES projects(id));")
         .map_err(|e| e.to_string())
 }
@@ -181,6 +184,8 @@ impl WorkspaceService {
                     path: r.get(2)?,
                     session_ids: vec![],
                     missing: false,
+                    pinned_session_ids: vec![],
+                    archived_session_ids: vec![],
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -195,6 +200,9 @@ impl WorkspaceService {
             .map_err(|e| e.to_string())?
             .collect::<Result<std::collections::HashMap<_, _>, _>>()
             .map_err(|e| e.to_string())?;
+        let mut navigation = db.prepare("SELECT session,pinned,archived FROM session_navigation").map_err(|e| e.to_string())?;
+        let states = navigation.query_map([], |r| Ok((r.get::<_,String>(0)?,(r.get::<_,bool>(1)?,r.get::<_,bool>(2)?))))
+            .map_err(|e| e.to_string())?.collect::<Result<std::collections::HashMap<_,_>,_>>().map_err(|e| e.to_string())?;
         for project in &mut projects {
             project.missing = project
                 .path
@@ -203,6 +211,10 @@ impl WorkspaceService {
             for session in &sessions {
                 if owners.get(&session.id) == Some(&project.id) {
                     project.session_ids.push(session.id.clone());
+                    if let Some((pinned,archived)) = states.get(&session.id) {
+                        if *pinned { project.pinned_session_ids.push(session.id.clone()); }
+                        if *archived { project.archived_session_ids.push(session.id.clone()); }
+                    }
                 }
             }
         }
@@ -229,6 +241,27 @@ impl WorkspaceService {
             .into_iter()
             .find(|p| p.id == id)
             .ok_or("Workspace not found".into())
+    }
+    pub fn set_session_state(&self, id: &str, pinned: bool, archived: bool) -> Result<(), String> {
+        self.live()?;
+        self.sessions.get(id)?;
+        self.context.db()?.execute("INSERT INTO session_navigation VALUES(?1,?2,?3) ON CONFLICT(session) DO UPDATE SET pinned=excluded.pinned,archived=excluded.archived",params![id,pinned,archived]).map_err(|e|e.to_string())?;
+        Ok(())
+    }
+    pub fn fork_session(&self, source: &str, id: &str) -> Result<crate::sessions::SessionInfo, String> {
+        self.live()?;
+        if !crate::sessions::valid_id(id) { return Err("Invalid session ID".into()); }
+        let mut db=self.context.db()?;
+        let tx=db.transaction().map_err(|e|e.to_string())?;
+        let project:String=tx.query_row("SELECT project FROM project_sessions WHERE session=?1",[source],|r|r.get(0)).map_err(|_|"Workspace not found")?;
+        tx.execute("INSERT INTO project_sessions VALUES(?1,?2)",params![id,project]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO workspace SELECT ?1,settings FROM workspace WHERE session=?2",params![id,source]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO selected_skills SELECT ?1,name FROM selected_skills WHERE session=?2",params![id,source]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO summaries SELECT ?1,prefix,summary FROM summaries WHERE session=?2",params![id,source]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO attachment_access SELECT ?1,id FROM attachments WHERE session=?2 UNION SELECT ?1,attachment FROM attachment_access WHERE session=?2",params![id,source]).map_err(|e|e.to_string())?;
+        self.sessions.fork(source,id)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        self.sessions.get(id)
     }
     pub fn rename(&self, id: &str, title: &str) -> Result<(), String> {
         self.live()?;
@@ -282,6 +315,41 @@ impl WorkspaceService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_actions_fork_history_and_scope_attachment_access() {
+        let dir=tempfile::tempdir().unwrap();
+        let context=Arc::new(ContextService::open(&dir.path().join("context.db")).unwrap());
+        let sessions=Arc::new(SessionService::open(&dir.path().join("sessions.db")).unwrap());
+        let registry=WorkspaceService::open(context.clone(),sessions.clone(),&dir.path().join("root"),true).unwrap();
+        registry.create_session("source","default").unwrap();
+        registry.create_session("unrelated","default").unwrap();
+        let file=context.put_attachment("source","file.txt","text/plain","aGVsbG8=").unwrap();
+        sessions.save("source",crate::sessions::SessionMessage{id:"u1".into(),parent_id:None,role:"user".into(),created_at:"2026-11-08".into(),parts:vec![crate::sessions::ContentPart{kind:"file".into(),data:serde_json::to_value(&file).unwrap()}],extensions:Default::default()},None).unwrap();
+        sessions.rename("source","Renamed").unwrap();
+        assert!(sessions.rename("source"," \n").is_err());
+        registry.set_session_state("source",true,true).unwrap();
+        let workspace=&registry.list().unwrap()[0];
+        assert_eq!(workspace.pinned_session_ids,["source"]);assert_eq!(workspace.archived_session_ids,["source"]);
+        let fork=registry.fork_session("source","fork").unwrap();
+        assert_eq!(fork.title,"Renamed — ветка");
+        assert_eq!(sessions.load("fork").unwrap().len(),1);
+        assert_eq!(context.get_attachment("fork",&file.id).unwrap().data,"aGVsbG8=");
+        assert!(context.get_attachment("unrelated",&file.id).is_err());
+        registry.fork_session("fork","fork-two").unwrap();
+        assert!(context.get_attachment("fork-two",&file.id).is_ok());
+        assert_eq!(context.workspace_get("fork").unwrap().cwd,context.workspace_get("source").unwrap().cwd);
+        assert!(registry.fork_session("source","fork").is_err());
+        assert!(registry.fork_session("missing","other").is_err());
+        assert_eq!(sessions.load("source").unwrap().len(),1);
+        registry.set_session_state("source",false,false).unwrap();
+        assert!(registry.list().unwrap()[0].archived_session_ids.is_empty());
+        registry.create_session("running","default").unwrap();
+        let request=serde_json::from_value(serde_json::json!({"sessionId":"running","requestId":"run","parentId":null,"message":{"id":"user","text":"work"},"model":"test","options":{}})).unwrap();
+        sessions.accept_run(&request,"2026-11-08").unwrap();
+        assert!(registry.fork_session("running","denied").is_err());
+        assert!(sessions.get("denied").is_err());
+        assert!(!registry.list().unwrap()[0].session_ids.contains(&"denied".to_owned()));
+    }
     #[test]
     fn rename_and_remove_preserve_history_folder_and_membership() {
         let dir = tempfile::tempdir().unwrap();

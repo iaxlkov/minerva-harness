@@ -16,6 +16,9 @@ export type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnsw
 type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
+ 'sessions.rename':Endpoint<{id:string;title:string},null>;
+ 'sessions.state':Endpoint<{id:string;pinned:boolean;archived:boolean},null>;
+ 'sessions.fork':Endpoint<{source:string;id:string},SessionInfo>;
  'session.snapshot':Endpoint<{sessionId:string},import('./generated').SessionBaseline>;
  'workspaces.list':Endpoint<Empty,WorkspaceInfo[]>;
  'workspaces.rename':Endpoint<{id:string;title:string},null>;

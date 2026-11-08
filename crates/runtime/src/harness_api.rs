@@ -60,6 +60,12 @@ struct RenameWorkspace {
     id: String,
     title: String,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionNavigation { id:String,pinned:bool,archived:bool }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForkSession { source:String,id:String }
 impl Runtime {
     pub fn create_session(&self, id: &str, workspace: Option<&str>) -> Result<(), String> {
         self.plugins
@@ -79,6 +85,18 @@ impl Runtime {
         }
         let harness = &self.plugins.harness;
         match method {
+            "sessions.rename" => {
+                let a:RenameWorkspace=args(params)?;self.sessions.rename(&a.id,&a.title)?;Ok(Value::Null)
+            }
+            "sessions.state" => {
+                let a:SessionNavigation=args(params)?;
+                self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?.set_session_state(&a.id,a.pinned,a.archived)?;
+                Ok(Value::Null)
+            }
+            "sessions.fork" => {
+                let a:ForkSession=args(params)?;
+                encoded(self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?.fork_session(&a.source,&a.id)?)
+            }
             "session.snapshot" => {
                 let a: Session = args(params)?;
                 encoded(self.sessions.baseline(&a.session_id)?)

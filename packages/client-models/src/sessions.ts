@@ -7,6 +7,14 @@ export class SessionsModel extends Store<SessionInfo[]> {
  /** A reconnect baseline is authoritative, but cannot overwrite subsequent events. */
  reconnect=()=>this.refresh();
  update=(item:SessionInfo)=>this.set([item,...this.state.filter(x=>x.id!==item.id)]);
+ async rename(id:string,title:string){
+  const generation=this.generation;await this.invoke('sessions.rename',{id,title});
+  if(generation!==this.generation)throw Error('Client scope changed');await this.refresh();
+ }
+ async fork(source:string){
+  const generation=this.generation;const item=await this.invoke('sessions.fork',{source,id:crypto.randomUUID()});
+  if(generation!==this.generation)throw Error('Client scope changed');this.update(item);return item;
+ }
  async create(model='',workspaceId?:string,currentDraftId?:string){
   const generation=this.generation;
   const reuse=currentDraftId&&(await this.invoke('session_load',{id:currentDraftId})).length===0;

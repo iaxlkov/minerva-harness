@@ -106,7 +106,7 @@ export function Chat({ model, configured, providers, pluginModels, onSelect, onP
   const [view, setView] = useState<'chat' | 'plugins'>('chat');
   return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}><div className="oe-studio app-shell">
     <ScrollArea asChild><aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><img src="/minerva-64.png" width={32} height={32} alt="" style={{borderRadius:9}}/></div><strong>minerva harness</strong></div>
+      <div className="brand" aria-label="Minerva Harness"><div className="brand-mark"><img src="/minerva-64.png" width={36} height={36} alt=""/></div><div className="brand-wordmark"><strong className="brand-name">Minerva</strong><span className="brand-descriptor">HARNESS</span></div></div>
       <div className="sidebar-section"><Button variant="outline" className="new-chat" onClick={() => { setView('chat'); onNew(); }}><Plus data-icon="inline-start"/> Новая сессия</Button></div>
       <Button variant="ghost" className={`nav-item ${view === "plugins" ? "selected" : ""}`} onClick={() => setView("plugins")}><Puzzle size={15}/><span>Плагины</span></Button>
       <UiSlot slot="navigation.items" scope={workspaceScope} componentProps={{session,sessions,disabled:false,onNew:(workspaceId)=>{setView('chat');onNew(workspaceId);},onSession:(item)=>{setView('chat');onSession(item);}}}/><div className="sidebar-bottom"><Settings sessionId={session.id} providers={providers} onChange={onProviders} activePlugins={activePlugins}/></div>

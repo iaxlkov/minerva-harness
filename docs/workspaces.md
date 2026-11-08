@@ -28,6 +28,19 @@ workspace can be renamed but cannot be removed. Built-in menu actions and plugin
 contributions use `ctx.contextMenus.register` with target `workspace`; the old
 `workspace.menu` slot remains a compatibility adapter (see `plugin-ui.md`).
 
+Session rows use the same registry with target `session`. Built-in actions pin or
+unpin, rename, fork, archive or restore, and copy the session ID. Pin/archive state
+is stored in `session_navigation`; workspace projections expose `pinnedSessionIds`
+and `archivedSessionIds`. Pinned sessions sort first. The archive view keeps old
+conversations accessible and supports restoring them without deleting history.
+
+`sessions.rename` validates a 1–128 character title. `sessions.state` writes the
+pin/archive flags. `sessions.fork` creates an independent session in the same
+workspace, copying messages, model, execution policy, selected skills and summary.
+Active runs cannot be forked. Provider integration state is not copied. Attachment
+references stay intact through explicit `attachment_access` grants, including when
+forking an existing fork; unrelated sessions cannot read those attachments.
+
 Desktop uses Tauri's dialog plugin with only `dialog:allow-open` on the main local
 window. Web uses an explicit host-side path form. Cancelling the desktop chooser
 does not create a workspace or session. No user files are moved or deleted.

@@ -39,7 +39,7 @@ test('selected workspace travels with session creation and shared desktop RPC',a
  assert.deepEqual(calls.at(-1),['harness_rpc',{method:'workspaces.create',params:{path:'C:/project'}}]);
  await desktop.call('session.snapshot',{sessionId:'active'});
  assert.deepEqual(calls.at(-1),['harness_rpc',{method:'session.snapshot',params:{sessionId:'active'}}]);
- for(const [method,params] of [['workspaces.rename',{id:'project',title:'Renamed'}],['workspaces.remove',{id:'project'}]]){
+ for(const [method,params] of [['workspaces.rename',{id:'project',title:'Renamed'}],['workspaces.remove',{id:'project'}],['sessions.rename',{id:'s',title:'Renamed'}],['sessions.state',{id:'s',pinned:true,archived:false}],['sessions.fork',{source:'s',id:'fork'}]]){
   await desktop.call(method,params);
   assert.deepEqual(calls.at(-1),['harness_rpc',{method,params}]);
  }

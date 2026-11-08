@@ -71,6 +71,12 @@ pub struct SessionService {
     shutdown_result: std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>,
 }
 impl SessionService {
+    pub fn rename(&self, id: &str, title: &str) -> Result<(), String> {
+        let title=title.trim();
+        if title.is_empty() || title.chars().count()>128 || title.chars().any(char::is_control) { return Err("Invalid session title".into()); }
+        self.store.rename(id,title)
+    }
+    pub(crate) fn fork(&self, source: &str, id: &str) -> Result<(), String> { self.store.fork(source,id) }
     pub fn baseline(&self, session: &str) -> Result<SessionBaseline, String> {
         self.store.baseline(session)
     }

@@ -33,6 +33,7 @@ async function mount(page) {
 
 for(const [width,height] of [[1280,800],[900,800],[700,800],[900,550]])test(`screen layout at ${width}x${height}`,async({page},testInfo)=>{
  await page.setViewportSize({width,height});await mount(page);
+ await page.locator('.brand').screenshot({path:testInfo.outputPath('brand.png')});
  const checkOverflow=async selector=>{
   expect(await page.locator(selector).evaluate(element=>element.scrollWidth-element.clientWidth)).toBeLessThanOrEqual(1);
  };

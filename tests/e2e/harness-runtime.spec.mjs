@@ -53,6 +53,40 @@ async function runtime(page,context,body,desktop=false){
  }
 }
 
+for(const desktop of [false,true])test(`session menus pin, rename, fork, archive, restore and copy IDs (${desktop?'desktop':'web'})`,async({page,context},testInfo)=>{
+ await context.grantPermissions(['clipboard-read','clipboard-write']);
+ await runtime(page,context,async({model,rpc,session,send})=>{
+  model.steps.push({text:'Original answer'});
+  await page.locator('input[type=file]').setInputFiles({name:'note.txt',mimeType:'text/plain',buffer:Buffer.from('hello')});
+  await send('Session actions');await expect(page.locator('.message.assistant')).toContainText('Original answer');
+  const original=(await rpc('session_load',{id:session.id}));
+  const menu=title=>page.getByRole('button',{name:`Меню диалога — ${title}`,exact:true});
+  await menu('Session actions').click();
+  await page.screenshot({path:testInfo.outputPath('session-menu.png')});
+  await page.getByRole('menuitem',{name:'Закрепить диалог',exact:true}).click();
+  await expect.poll(async()=>(await rpc('workspaces.list')).some(w=>w.pinnedSessionIds.includes(session.id))).toBe(true);
+  await menu('Session actions').click();await page.getByRole('menuitem',{name:'Переименовать',exact:true}).click();
+  await page.getByLabel('Название диалога',{exact:true}).fill('Renamed chat');await page.getByRole('button',{name:'Сохранить',exact:true}).click();
+  await menu('Renamed chat').click();await page.getByRole('menuitem',{name:'Копировать ID диалога',exact:true}).click();
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(session.id);
+  await menu('Renamed chat').click();await page.getByRole('menuitem',{name:'Создать ветку',exact:true}).click();
+  await expect(page.locator('.breadcrumbs strong')).toHaveText('Renamed chat — ветка');
+  await expect(page.locator('.message.assistant')).toContainText('Original answer');
+  const fork=(await rpc('session_list')).find(item=>item.title==='Renamed chat — ветка');
+  expect(fork.id).not.toBe(session.id);
+  const ref=original.flatMap(item=>item.parts).find(part=>part.kind==='file').data;
+  expect((await rpc('attachments.get',{sessionId:fork.id,id:ref.id})).data).toBe(Buffer.from('hello').toString('base64'));
+  model.steps.push({text:'Fork answer'});await send('Continue fork');
+  await expect(page.locator('.messages')).toContainText('Fork answer');expect(await rpc('session_load',{id:session.id})).toEqual(original);
+  await menu(fork.title).click();await page.getByRole('menuitem',{name:'Архивировать диалог',exact:true}).click();
+  await expect(menu(fork.title)).toHaveCount(0);
+  await page.getByRole('button',{name:'Архив диалогов',exact:true}).click();await menu(fork.title).click();
+  await page.getByRole('menuitem',{name:'Восстановить диалог',exact:true}).click();
+  await page.getByRole('button',{name:'Вернуться к диалогам',exact:true}).click();await expect(menu(fork.title)).toBeAttached();
+  await page.reload();await expect(menu('Renamed chat')).toBeAttached();
+ },desktop);
+});
+
 for(const desktop of [false,true])test(`switching chats keeps a background run alive and allows another chat to send (${desktop?'desktop':'web'})`,async({page,context})=>{
  await runtime(page,context,async({model,rpc,session,send})=>{
   model.steps.push({text:'First background result',prefix:'First is working',delay:5000},{text:'Second result'});

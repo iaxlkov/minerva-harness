@@ -98,6 +98,14 @@ ID папки. Цель workspace имеет вид
 `{kind:'workspace', value:{workspace:WorkspaceInfo, disabled:boolean}}`.
 Новые семейства целей расширяют интерфейс `ContextMenuTargetMap` в SDK.
 
+Для диалогов цель имеет вид `{kind:'session', value:{session:SessionInfo,
+workspaceId:string, pinned:boolean, archived:boolean, disabled:boolean}}`.
+Встроенные регистрации: `session.pin` (100), `session.rename` (200),
+`session.fork` (300), `session.archive` (400), `session.copy` (500).
+Плагин может добавить свои действия в тот же реестр. Подготовка ветки проверяет
+текущий snapshot: при выполняющейся задаче пункт недоступен; ядро повторяет эту
+проверку в транзакции перед копированием.
+
 Иконки — отдельный keyed-слот `contextMenu.icon` в workspace scope.
 `entryId` совпадает с `icon.key`, компонент получает `{icon}`. Описания действий
 не содержат JSX. Общий `ContextMenu` экспортирован из `@minerva/ui`; он принимает

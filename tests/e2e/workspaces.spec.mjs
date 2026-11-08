@@ -26,11 +26,11 @@ test('workspace UI plugin creates grouped durable sessions through the real Host
   await page.getByLabel('Папка проекта').fill(projectPath);
   await page.getByRole('button',{name:'Создать',exact:true}).click();
   const group=page.locator('.workspace-group').filter({has:page.getByRole('button',{name:'my-project',exact:true})});
-  await expect(group.locator('.workspace-sessions button')).toHaveCount(1);
+  await expect(group.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(1);
   const input=page.getByRole('textbox',{name:'Сообщение ассистенту'});
   await input.fill('Unsent draft');
   await page.getByRole('button',{name:'Новая сессия',exact:true}).click();
-  await expect(group.locator('.workspace-sessions button')).toHaveCount(1);
+  await expect(group.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(1);
   await expect(input).toHaveValue('Unsent draft');
   let project=(await rpc('workspaces.list')).find(item=>item.title==='my-project');
   expect(project.sessionIds).toHaveLength(1);
@@ -38,11 +38,11 @@ test('workspace UI plugin creates grouped durable sessions through the real Host
   await rpc('session_create',{id:'old-empty',workspaceId:project.id});
   for(const sessionId of project.sessionIds)expect((await rpc('workspace.get',{sessionId})).cwd).toBe(project.path);
   await page.reload();
-  await expect(group.locator('.workspace-sessions button')).toHaveCount(1);
+  await expect(group.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(1);
   await page.getByRole('button',{name:'Новый диалог — Default workspace',exact:true}).click();
   const defaults=page.locator('.workspace-group').filter({has:page.getByRole('button',{name:'Default workspace',exact:true})});
-  await expect(defaults.locator('.workspace-sessions button')).toHaveCount(1);
-  await expect(group.locator('.workspace-sessions button')).toHaveCount(0);
+  await expect(defaults.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(1);
+  await expect(group.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(0);
   expect((await rpc('workspaces.list')).find(item=>item.id==='default').sessionIds).toHaveLength(1);
   // Exercise the desktop bridge contract without opening an interactive OS window in CI.
   await page.evaluate(folder=>{window.__TAURI_INTERNALS__={invoke:async(command,args)=>{
@@ -52,7 +52,7 @@ test('workspace UI plugin creates grouped durable sessions through the real Host
   await page.getByRole('button',{name:'Создать workspace',exact:true}).click();
   await expect(group.locator('.nav-item.selected')).toHaveCount(1);
   expect((await rpc('workspaces.list')).filter(item=>item.title==='my-project')).toHaveLength(1);
-  await expect(group.locator('.workspace-sessions button')).toHaveCount(1);
+  await expect(group.locator('.workspace-sessions .session-row > .nav-item')).toHaveCount(1);
   await page.evaluate(()=>{window.__TAURI_INTERNALS__.invoke=async()=>null;});
   await page.getByRole('button',{name:'Создать workspace',exact:true}).click();
   await expect(page.getByRole('button',{name:'Создать workspace',exact:true})).toBeEnabled();

@@ -141,6 +141,20 @@ impl SessionStore {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+    pub fn rename(&self,id:&str,title:&str)->Result<(),String>{
+        let changed=self.connection.lock()?.execute("UPDATE sessions SET title=?2,updated_at=unixepoch() WHERE id=?1",params![id,title]).map_err(|e|e.to_string())?;
+        if changed==0 {return Err("Session not found".into());} Ok(())
+    }
+    pub fn fork(&self,source:&str,id:&str)->Result<(),String>{
+        let mut db=self.connection.lock()?;
+        let tx=db.transaction().map_err(|e|e.to_string())?;
+        let running:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE session_id=?1 AND status='running')",[source],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if running {return Err("Дождитесь завершения задачи перед созданием ветки".into());}
+        let changed=tx.execute("INSERT INTO sessions SELECT ?2,title||' — ветка',unixepoch(),model FROM sessions WHERE id=?1",params![source,id]).map_err(|e|e.to_string())?;
+        if changed==0 {return Err("Session not found".into());}
+        tx.execute("INSERT INTO messages SELECT ?2,m.message_id,m.parent_id,m.role,m.created_at,m.content_json,CASE WHEN r.id IS NULL THEN m.extras_json ELSE json_set(m.extras_json,'$.execution',json_object('status',r.status,'error',r.error)) END,m.seq FROM messages m LEFT JOIN runs r ON r.session_id=m.session_id AND r.id=m.message_id WHERE m.session_id=?1 ORDER BY m.seq",params![source,id]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e|e.to_string())
+    }
     pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
         let db = self.connection.lock().map_err(|e| e.to_string())?;
         let mut q=db.prepare("SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions ORDER BY updated_at DESC,rowid DESC").map_err(|e|e.to_string())?;

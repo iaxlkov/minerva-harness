@@ -14,7 +14,10 @@ const HostContext=createContext<BrowserPluginHost|null>(null);
 export function useUiPlugins(){const host=useContext(HostContext);if(!host)throw Error('Browser plugin composition is missing');return host;}
 export interface SettingsPageProps {placement:'navigation'|'body'; selectedPage:string; onSelectPage:(id:string)=>void}
 declare module '../../../../packages/plugin-sdk/src/context-menus.ts' {
- interface ContextMenuTargetMap {workspace:{workspace:WorkspaceInfo;disabled:boolean}}
+ interface ContextMenuTargetMap {
+  workspace:{workspace:WorkspaceInfo;disabled:boolean};
+  session:{session:SessionInfo;workspaceId:string;pinned:boolean;archived:boolean;disabled:boolean};
+ }
 }
 /** Public UI contracts contain display data and callbacks, never a plugin context. */
 export interface AppSlotProps {

@@ -185,6 +185,7 @@ pub(crate) async fn dispatch(
 ) -> Result<Value, DispatchError> {
     match method {
         "session.snapshot"
+        | "sessions.rename" | "sessions.state" | "sessions.fork"
         | "workspaces.list"
         | "workspaces.rename"
         | "workspaces.remove"
