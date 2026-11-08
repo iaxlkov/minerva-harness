@@ -19,6 +19,7 @@ pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "tool-runtime",
     "context",
     "workspace-tools",
+    "workspaces",
     "mcp",
     "sessions",
     "agent-loop",

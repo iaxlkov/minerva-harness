@@ -36,6 +36,9 @@ pub struct SessionInfo {
     #[ts(type = "number")]
     pub updated_at: i64,
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub has_messages: Option<bool>,
 }
 pub use crate::transcript::ContentPart;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -284,6 +287,7 @@ impl SessionService {
                                 | "tool-result"
                                 | "extension"
                                 | "image"
+                                | "file"
                         )
                 }) {
                     return Err("Этот тип содержимого пока нельзя передать модели.".into());
@@ -322,7 +326,7 @@ impl SessionService {
         self.store.integration_state(id, namespace)
     }
 }
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
@@ -339,6 +343,20 @@ fn valid_namespace(namespace: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_summaries_identify_empty_drafts_without_changing_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = SessionService::open(&dir.path().join("history.sqlite3")).unwrap();
+        service.create("draft").unwrap();
+        service.create("used").unwrap();
+        service.save("used", message("u1", None, "user", "hello"), None).unwrap();
+        assert_eq!(service.get("draft").unwrap().has_messages, Some(false));
+        assert_eq!(service.get("used").unwrap().has_messages, Some(true));
+        assert_eq!(service.baseline("used").unwrap().session.has_messages, Some(true));
+        let sessions = service.list().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions.iter().find(|s| s.id == "draft").unwrap().has_messages, Some(false));
+    }
     #[test]
     fn rejects_broken_links_and_rewriting_history() {
         let dir = tempfile::tempdir().unwrap();

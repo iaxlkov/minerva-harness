@@ -1,10 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SessionModel} from '../packages/client-models/src/session.ts';
-import {createSessionStream} from '../packages/client/src/streams.ts';
+import {createSessionStream,createDesktopSessionStream} from '../packages/client/src/streams.ts';
 const session={id:'s',title:'S',updatedAt:1,model:null};
 const message={id:'r',parentId:null,role:'assistant',createdAt:'2026-01-01',parts:[],extensions:{}};
 const baseline=(cursor=0)=>({kind:'baseline',sessionId:'s',snapshot:{session,messages:[message],cursor,activeRun:null}});
+
+test('desktop observation resumes snapshots and fences late IPC after leaving a session',async()=>{
+ const pending=[],frames=[];
+ const stream=createDesktopSessionStream(async(method,params)=>{
+  assert.equal(method,'session.snapshot');assert.equal(params.sessionId,'s');
+  return new Promise(resolve=>pending.push(resolve));
+ });
+ const handle=await stream.follow('s',frame=>frames.push(frame));
+ pending.shift()(baseline().snapshot);await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(frames[0].kind,'baseline');
+ handle.reconnect();handle.dispose();pending.shift()(baseline(1).snapshot);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(frames.length,1);
+ const returned=await stream.follow('s',frame=>frames.push(frame));
+ pending.shift()(baseline(2).snapshot);await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(frames[1].snapshot.cursor,2);returned.dispose();
+});
+
+test('message events keep a conversation visible even after legacy session updates',async()=>{
+ let receive;
+ const model=new SessionModel('s',{follow:async(_,cb)=>{receive=cb;return {dispose(){},reconnect(){}}}});
+ await model.follow();
+ receive({...baseline(),snapshot:{...baseline().snapshot,session:{...session,hasMessages:false},messages:[]}});
+ receive({kind:'event',sessionId:'s',seq:1,eventType:'message.upsert',data:{...message,role:'user',parts:[{kind:'file',data:{attachmentId:'file'}}]}});
+ assert.equal(model.getSnapshot().session.hasMessages,true);
+ receive({kind:'event',sessionId:'s',seq:2,eventType:'session.updated',data:session});
+ assert.equal(model.getSnapshot().session.hasMessages,true);
+ model.dispose();
+});
 test('neutral extension JSON scalars survive a baseline without a reconnect loop',async()=>{
  let receive,reconnects=0;
  const model=new SessionModel('s',{follow:async(_,cb)=>{receive=cb;return {dispose(){},reconnect(){reconnects++}}}});

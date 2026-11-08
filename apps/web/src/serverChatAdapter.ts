@@ -24,15 +24,16 @@ export function serverChatAdapter(config:ChatAdapterConfig):ChatModelAdapter {
         await pause(200);
       }
     };
-    const onAbort=()=>{void cancel();};
+    const detached=()=>config.isAttached?.()===false;
+    const onAbort=()=>{if(!detached())void cancel();};
     config.onRunning(true);
     try{
       abortSignal.throwIfAborted();
       const last=messages.at(-1);
       if(!last||last.role!=='user')throw Error('Нужно сообщение пользователя.');
       const text=last.content.filter(part=>part.type==='text').map(part=>part.text).join('\n');
-      const attachments=[...last.content,...(last.attachments??[]).flatMap(item=>item.content)].flatMap(part=>{if(part.type!=='image')return [];const ref=(part.providerMetadata?.minerva as {attachment?:import('../../../packages/client/src/types.ts').AttachmentRef}|undefined)?.attachment;return ref?[ref]:[];});
-      if(attachments.length>8||attachments.reduce((sum,ref)=>sum+ref.bytes,0)>20*1024*1024)throw Error('Прикрепите до 8 изображений общим размером до 20 МиБ.');
+      const attachments=[...last.content,...(last.attachments??[]).flatMap(item=>item.content)].flatMap(part=>{if(part.type!=='image'&&part.type!=='file')return [];const ref=(part.providerMetadata?.minerva as {attachment?:import('../../../packages/client/src/types.ts').AttachmentRef}|undefined)?.attachment;return ref?[ref]:[];});
+      if(attachments.length>8||attachments.reduce((sum,ref)=>sum+ref.bytes,0)>20*1024*1024)throw Error('Прикрепите до 8 файлов общим размером до 20 МиБ.');
       if(!text.trim()&&!attachments.length)throw Error('Нужно непустое сообщение пользователя.');
       config.history.beginResponse(runId,last.id);
       abortSignal.addEventListener('abort',onAbort,{once:true});
@@ -44,6 +45,7 @@ export function serverChatAdapter(config:ChatAdapterConfig):ChatModelAdapter {
       }
       let lastContent='',offlineSince=0;
       while(true){
+        if(detached())return;
         let snapshot;
         try{snapshot=await config.invoke('runs.get',ref);offlineSince=0;}
         catch(error){
@@ -52,6 +54,7 @@ export function serverChatAdapter(config:ChatAdapterConfig):ChatModelAdapter {
           if(Date.now()-offlineSince>30000)throw Error('Связь с сервером потеряна. Задача продолжает выполняться; откройте диалог после подключения.');
           await pause(500);continue;
         }
+        if(detached())return;
         const terminal=snapshot.status!=='running';
         const serialized=JSON.stringify(snapshot.parts);
         if(serialized!==lastContent||terminal){
@@ -72,6 +75,7 @@ export function serverChatAdapter(config:ChatAdapterConfig):ChatModelAdapter {
         await pause(200);
       }
     }catch(error){
+      if(detached())return;
       if(!abortSignal.aborted)config.onError(`Не удалось получить ответ: ${String(error)}`);
       try{
         const saved=await config.history.recoverResponse(runId);

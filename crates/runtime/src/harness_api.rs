@@ -49,7 +49,26 @@ struct Id {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateWorkspace {
+    path: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameWorkspace {
+    id: String,
+    title: String,
+}
 impl Runtime {
+    pub fn create_session(&self, id: &str, workspace: Option<&str>) -> Result<(), String> {
+        self.plugins
+            .context()
+            .try_service::<crate::workspaces::WorkspaceService>()
+            .map_err(|e| e.to_string())?
+            .create_session(id, workspace.unwrap_or("default"))
+    }
+
     pub async fn harness_call(
         self: &Arc<Self>,
         method: &str,
@@ -60,6 +79,42 @@ impl Runtime {
         }
         let harness = &self.plugins.harness;
         match method {
+            "session.snapshot" => {
+                let a: Session = args(params)?;
+                encoded(self.sessions.baseline(&a.session_id)?)
+            }
+            "workspaces.list" => {
+                let _: Empty = args(params)?;
+                encoded(
+                    self.plugins
+                        .context()
+                        .try_service::<crate::workspaces::WorkspaceService>()
+                        .map_err(|e| e.to_string())?
+                        .list()?,
+                )
+            }
+            "workspaces.create" => {
+                let a: CreateWorkspace = args(params)?;
+                encoded(
+                    self.plugins
+                        .context()
+                        .try_service::<crate::workspaces::WorkspaceService>()
+                        .map_err(|e| e.to_string())?
+                        .create(&a.path)?,
+                )
+            }
+            "workspaces.rename" => {
+                let a: RenameWorkspace = args(params)?;
+                self.plugins.context().try_service::<crate::workspaces::WorkspaceService>()
+                    .map_err(|e| e.to_string())?.rename(&a.id, &a.title)?;
+                Ok(Value::Null)
+            }
+            "workspaces.remove" => {
+                let a: Id = args(params)?;
+                self.plugins.context().try_service::<crate::workspaces::WorkspaceService>()
+                    .map_err(|e| e.to_string())?.remove(&a.id)?;
+                Ok(Value::Null)
+            }
             "workspace.get" => {
                 let a: Session = args(params)?;
                 self.sessions.get(&a.session_id)?;

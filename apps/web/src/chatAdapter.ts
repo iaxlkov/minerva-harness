@@ -17,6 +17,7 @@ export type ChatAdapterConfig = {
   onSaved: () => void;
   onError: (message: string) => void;
   serverOwned?: boolean;
+  isAttached?: () => boolean;
 };
 export function chatAdapter(config: ChatAdapterConfig): ChatModelAdapter {
   if(config.serverOwned)return serverChatAdapter(config);

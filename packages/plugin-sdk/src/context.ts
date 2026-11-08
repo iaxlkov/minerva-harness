@@ -1,3 +1,4 @@
+import {ContextMenuRegistry,type ContextMenuContribution,type ContextMenuTargetMap} from './context-menus.ts';
 import { Context } from 'cordis';
 import type { Fiber } from 'cordis';
 import { Ownership, scopeKey } from './lifecycle.ts';
@@ -13,8 +14,9 @@ export class BrowserPluginContext {
   private ownership: Ownership;
   private slotRegistry: SlotRegistry;
   private serviceRegistry: ServiceRegistry;
-  constructor(owner: string, scope: Scope, slots: SlotRegistry, services: ServiceRegistry, ownership: Ownership) {
-    this.ownerPluginId = owner; this.currentScope = Object.freeze({ ...scope }); this.slotRegistry = slots; this.serviceRegistry = services; this.ownership = ownership;
+  private menuRegistry: ContextMenuRegistry;
+  constructor(owner: string, scope: Scope, slots: SlotRegistry, services: ServiceRegistry, ownership: Ownership, menuRegistry: ContextMenuRegistry) {
+    this.ownerPluginId = owner; this.currentScope = Object.freeze({ ...scope }); this.slotRegistry = slots; this.serviceRegistry = services; this.ownership = ownership; this.menuRegistry = menuRegistry;
   }
   get slots() { return {
     register: (slot: SlotName, entry: Omit<SlotEntry, 'ownerPluginId'> & { ownerPluginId?: string }) => {
@@ -23,6 +25,7 @@ export class BrowserPluginContext {
     },
     subscribe: (listener: () => void) => this.ownership.own(this.slotRegistry.subscribe(listener)),
   }; }
+  get contextMenus() { return { register: <K extends keyof ContextMenuTargetMap>(entry:ContextMenuContribution<K>) => this.ownership.own(this.menuRegistry.register(this.currentScope,this.ownerPluginId,entry)) }; }
   get services() { return {
     provide: <T>(key: ServiceKey<T>, value: T) => this.ownership.own(this.serviceRegistry.provide(key, this.currentScope, this.ownerPluginId, value)),
     get: <T>(key: ServiceKey<T>) => this.serviceRegistry.get(key, this.currentScope),
@@ -30,7 +33,7 @@ export class BrowserPluginContext {
   scope(scope: Scope): BrowserPluginContext {
     if (this.currentScope.kind === 'session' && scopeKey(this.currentScope) !== scopeKey(scope) || this.currentScope.kind === 'workspace' && (scope.kind === 'root' || scope.workspaceId !== this.currentScope.workspaceId)) throw Error('Child scope mismatch');
     const ownership = new Ownership(); this.ownership.own(ownership);
-    return new BrowserPluginContext(this.ownerPluginId, scope, this.slotRegistry, this.serviceRegistry, ownership);
+    return new BrowserPluginContext(this.ownerPluginId, scope, this.slotRegistry, this.serviceRegistry, ownership, this.menuRegistry);
   }
   effect(cleanup: () => void): Disposable { return this.ownership.own({ dispose: cleanup }); }
   listen(target: EventTarget, type: string, listener: EventListener, options?: AddEventListenerOptions): Disposable {
@@ -40,6 +43,7 @@ export class BrowserPluginContext {
 }
 export class BrowserPluginHost {
   readonly slots: SlotRegistry;
+  readonly contextMenus = new ContextMenuRegistry();
   readonly services = new ServiceRegistry();
   private cordis = new Context();
   private active = new Map<string, { plugin: BrowserPlugin; fiber: Fiber; ownership: Ownership }>();
@@ -68,7 +72,7 @@ export class BrowserPluginHost {
         const fiber = this.cordis.plugin(async (ctx: Context) => {
           ctx.effect(() => () => ownership.dispose());
           try {
-            const result = await plugin.apply(new BrowserPluginContext(plugin.id, { kind: 'root' }, this.slots, this.services, ownership));
+            const result = await plugin.apply(new BrowserPluginContext(plugin.id, { kind: 'root' }, this.slots, this.services, ownership, this.contextMenus));
             if (result) ownership.own(result);
           } catch (error) { failed = true; activationError = error; }
         });

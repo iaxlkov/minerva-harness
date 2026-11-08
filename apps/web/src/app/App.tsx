@@ -13,9 +13,23 @@ export function App() {
   const [sessionError,setSessionError]=useState('');
   const [sessionLoading,setSessionLoading]=useState(true);
   const initialized=useRef(false);
+  const creatingSession=useRef(false);
   async function refreshSessions(){try{await models.sessions.refresh();const list=models.sessions.getSnapshot();setSession(current=>list.find(item=>item.id===current?.id)||current);}catch(error){setSessionError(`Не удалось получить историю: ${String(error)}`);}}
-  async function createSession(){try{setSessionError('');const item=await models.sessions.create(model);setSession(item);}catch(error){setSessionError(`Не удалось создать диалог: ${String(error)}`);}}
-  useEffect(()=>{if(initialized.current)return;initialized.current=true;void (async()=>{try{await models.sessions.refresh();const list=models.sessions.getSnapshot();if(list.length){setSession(list[0]);setModel(list[0].model||'');}else await createSession();}catch(error){setSessionError(`Не удалось загрузить историю: ${String(error)}`);}finally{setSessionLoading(false);}})();},[]);
+  async function createSession(workspaceId?:string){
+    if(creatingSession.current)return;
+    creatingSession.current=true;
+    try{
+      setSessionError('');
+      const workspaces=session?await invoke('workspaces.list'):[];
+      const currentWorkspace=workspaces.find(item=>item.sessionIds.includes(session?.id??''))?.id;
+      if(!workspaceId&&session&&!currentWorkspace)throw Error('Не удалось определить workspace текущего диалога.');
+      workspaceId??=currentWorkspace??'default';
+      const target=workspaces.find(item=>item.id===workspaceId);
+      const draftId=workspaceId===currentWorkspace?session?.id:models.sessions.getSnapshot().find(item=>item.hasMessages===false&&target?.sessionIds.includes(item.id))?.id;
+      const item=await models.sessions.create(model,workspaceId,draftId);setSession(item);
+    }catch(error){setSessionError(`Не удалось создать диалог: ${String(error)}`);}finally{creatingSession.current=false;}
+  }
+  useEffect(()=>{if(initialized.current)return;initialized.current=true;void (async()=>{try{await models.sessions.refresh();await models.workspaces.refresh();const visible=new Set(models.workspaces.getSnapshot().flatMap(item=>item.sessionIds));const list=models.sessions.getSnapshot().filter(item=>visible.has(item.id));if(list.length){const initial=list.find(item=>item.hasMessages!==false)??list[0];setSession(initial);setModel(initial.model||'');}else await createSession();}catch(error){setSessionError(`Не удалось загрузить историю: ${String(error)}`);}finally{setSessionLoading(false);}})();},[]);
   const providers=React.useSyncExternalStore(models.providers.subscribe,models.providers.getSnapshot);
   const setProviders=models.providers.set;
   const [model,setModel]=useState('');
@@ -50,7 +64,7 @@ export function App() {
     return ()=>{active=false;clearTimeout(timer);};
   },[enabledPackages]);
   const availablePluginModels=pluginModels.filter(m=>plugins.some(p=>p.enabled&&m.id.startsWith(`plugin:${p.id}/`)));
-  const configured=availablePluginModels.some(m=>m.id===model)||providers.some(p=>p.hasKey && p.models.some(m=>`api:${p.id}/${m}`===model));
+  const configured=availablePluginModels.some(m=>m.id===model)||providers.some(p=>(p.hasKey||p.protocol==='ollama') && p.models.some(m=>`api:${p.id}/${m}`===model));
   function selectSession(item:SessionInfo){setSessionError('');setSession(item);setModel(item.model||'');}
   const modelWrites=useRef(Promise.resolve());
   const activeSessionId=useRef(session?.id);activeSessionId.current=session?.id;
@@ -77,5 +91,5 @@ export function App() {
   },[session?.id,model,availablePluginModels]);
 
   if(!session)return <div className="oe-studio session-startup" role="status">{sessionLoading?'Загружаем историю…':sessionError||'Нет доступных диалогов'}{!sessionLoading&&<Button variant="outline" onClick={()=>void createSession()}>Повторить</Button>}</div>;
-  return <>{sessionError&&<div className="session-error" role="alert">{sessionError}<button aria-label="Закрыть уведомление" onClick={()=>setSessionError('')}>×</button></div>}<Chat key={session.id} session={session} sessions={sessions} onSession={selectSession} onSaved={()=>void refreshSessions()} onError={setSessionError} model={model} configured={configured} providers={providers} pluginModels={availablePluginModels} onSelect={selectModel} onProviders={setProviders} activePlugins={activePlugins} onNew={()=>void createSession()}/></>;
+  return <>{sessionError&&<div className="session-error" role="alert">{sessionError}<button aria-label="Закрыть уведомление" onClick={()=>setSessionError('')}>×</button></div>}<Chat key={session.id} session={session} sessions={sessions} onSession={selectSession} onSaved={()=>void refreshSessions()} onError={setSessionError} model={model} configured={configured} providers={providers} pluginModels={availablePluginModels} onSelect={selectModel} onProviders={setProviders} activePlugins={activePlugins} onNew={workspaceId=>void createSession(workspaceId)}/></>;
 }

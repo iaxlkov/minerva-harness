@@ -4,9 +4,12 @@ export const slotDeclarations = {
   'settings.pages': { kind: 'keyed', scope: 'workspace' },
   'conversation.views': { kind: 'keyed', scope: 'session' },
   'composer.actions': { kind: 'list', scope: 'session' },
+  'composer.menu': { kind: 'list', scope: 'workspace' },
   'message.renderers': { kind: 'keyed', scope: 'session' },
   'tool.renderers': { kind: 'keyed', scope: 'session' },
   'workspace.panels': { kind: 'list', scope: 'workspace' },
+  'workspace.menu': { kind: 'list', scope: 'workspace' },
+  'contextMenu.icon': { kind: 'keyed', scope: 'workspace' },
 } as const;
 export type SlotDeclarations = typeof slotDeclarations;
 export type SlotName = keyof SlotDeclarations;

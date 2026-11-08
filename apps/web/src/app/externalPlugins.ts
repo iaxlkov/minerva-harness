@@ -4,6 +4,9 @@ import * as ReactDOM from 'react-dom';
 import * as ReactDOMClient from 'react-dom/client';
 import { Button } from '../components/ui/button';
 import * as select from '../components/ui/select';
+import * as dropdown from '../components/ui/dropdown-menu';
+import {ComposerMenuItem} from '../components/assistant-ui/composer-menu';
+import {ContextMenu} from '../components/ContextMenu';
 import { ExternalClientModules } from '../../../../packages/plugin-sdk/src/client-modules.ts';
 import type { ClientModuleFactory } from '../../../../packages/plugin-sdk/src/client-modules.ts';
 import type { BrowserPluginHost } from '../../../../packages/plugin-sdk/src/context.ts';
@@ -13,7 +16,7 @@ import { models, registerScopeCleanup } from './models.ts';
 
 export const sharedClientModules = {
   react: React, 'react/jsx-runtime': jsxRuntime, 'react-dom': ReactDOM,
-  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, ...select },
+  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, ...select, ...dropdown, ComposerMenuItem, ContextMenu },
 };
 export async function compileClientModule(source: string): Promise<ClientModuleFactory> {
   const url = URL.createObjectURL(new Blob([`export default function(require,module,exports){\n${source}\n}`], { type: 'text/javascript' }));

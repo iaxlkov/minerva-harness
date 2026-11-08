@@ -7,7 +7,14 @@ export class SessionsModel extends Store<SessionInfo[]> {
  /** A reconnect baseline is authoritative, but cannot overwrite subsequent events. */
  reconnect=()=>this.refresh();
  update=(item:SessionInfo)=>this.set([item,...this.state.filter(x=>x.id!==item.id)]);
- async create(model=''){const generation=this.generation;const id=crypto.randomUUID();await this.invoke('session_create',{id});if(model)await this.invoke('session_set_model',{id,model});const item=await this.invoke('session_get',{id});if(generation!==this.generation)throw new Error('Client scope changed');this.update(item);return item;}
+ async create(model='',workspaceId?:string,currentDraftId?:string){
+  const generation=this.generation;
+  const reuse=currentDraftId&&(await this.invoke('session_load',{id:currentDraftId})).length===0;
+  if(generation!==this.generation)throw new Error('Client scope changed');
+  const id=reuse?currentDraftId:crypto.randomUUID();
+  if(!reuse){await this.invoke('session_create',{id,...(workspaceId?{workspaceId}:{})});if(model)await this.invoke('session_set_model',{id,model});}
+  const item=await this.invoke('session_get',{id});if(generation!==this.generation)throw new Error('Client scope changed');this.update(item);return item;
+ }
  private writes=Promise.resolve();
  setModel(id:string,model:string){const generation=this.generation;const next=this.writes.then(async()=>{await this.invoke('session_set_model',{id,model});if(generation!==this.generation)return;this.set(this.state.map(item=>item.id===id?{...item,model}:item));});this.writes=next.catch(()=>{});return next;}
  dispose=()=>this.clear([]);

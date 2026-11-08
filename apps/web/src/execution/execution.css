@@ -3,7 +3,7 @@
 .execution-card .tool-history-status { margin-left:auto; white-space:nowrap; }
 .execution-card[data-tool-state="failed"] .tool-history-status { color:#b04737; }
 .execution-card[data-tool-state="cancelled"] .tool-history-status { color:#766c60; }
-.execution-card pre { overflow:auto; max-height:360px; white-space:pre; }
+.execution-card pre {  max-height:360px; white-space:pre; }
 .execution-card summary:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
 .execution-card .execution-metadata { margin-top:12px; font-size:12px; }
 .execution-card .execution-metadata summary { cursor:pointer; }

@@ -1,8 +1,9 @@
+import {workspacePlugin} from '../plugins/workspaces';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
 import {BrowserPluginHost, type Scope, type SlotName, type SlotSelection, type BrowserPluginContext} from '../../../../packages/plugin-sdk/src/index.ts';
 import {SlotRenderer} from '../../../../packages/plugin-sdk/src/renderer.tsx';
-import type {Provider,SessionInfo,PluginModel} from '../../../../packages/client/src/types.ts';
+import type {Provider,SessionInfo,PluginModel,WorkspaceInfo} from '../../../../packages/client/src/types.ts';
 import type {ToolCallMessagePartProps} from '@assistant-ui/react';
 import type {ExternalClientModules} from '../../../../packages/plugin-sdk/src/client-modules.ts';
 import {ExternalPluginErrors} from './ExternalPluginErrors';
@@ -12,16 +13,22 @@ export const sessionScope=(sessionId:string):Scope=>({kind:'session',workspaceId
 const HostContext=createContext<BrowserPluginHost|null>(null);
 export function useUiPlugins(){const host=useContext(HostContext);if(!host)throw Error('Browser plugin composition is missing');return host;}
 export interface SettingsPageProps {placement:'navigation'|'body'; selectedPage:string; onSelectPage:(id:string)=>void}
+declare module '../../../../packages/plugin-sdk/src/context-menus.ts' {
+ interface ContextMenuTargetMap {workspace:{workspace:WorkspaceInfo;disabled:boolean}}
+}
 /** Public UI contracts contain display data and callbacks, never a plugin context. */
 export interface AppSlotProps {
  'root.layout':{children:ReactNode};
- 'navigation.items':{session:SessionInfo;onNew:()=>void;onSession:(session:SessionInfo)=>void};
+ 'navigation.items':{session:SessionInfo;sessions:SessionInfo[];disabled?:boolean;onNew:(workspaceId?:string)=>void;onSession:(session:SessionInfo)=>void};
  'settings.pages':SettingsPageProps;
  'conversation.views':{session:SessionInfo;model:string;configured:boolean;providers:Provider[];pluginModels?:PluginModel[];onSelect:(model:string)=>void};
  'composer.actions':{model:string;onSelect:(model:string)=>void};
+ 'composer.menu':{sessionId:string;disabled:boolean;onClose:()=>void};
  'tool.renderers':ToolCallMessagePartProps;
  'message.renderers':{children:ReactNode};
  'workspace.panels':{session:SessionInfo};
+ 'workspace.menu':{workspace:WorkspaceInfo;disabled:boolean;onClose:()=>void;onAction:(action:'rename'|'remove')=>void};
+ 'contextMenu.icon':{icon:{key:string;src?:string}};
 }
 export function registerUiSlot<K extends SlotName>(ctx:BrowserPluginContext,slot:K,entry:{entryId:string;order?:number;component:(props:AppSlotProps[K])=>ReactNode}){
  return ctx.slots.register(slot,entry);
@@ -29,6 +36,7 @@ export function registerUiSlot<K extends SlotName>(ctx:BrowserPluginContext,slot
 export async function createBrowserComposition(selection:SlotSelection={}){
  const host=new BrowserPluginHost(selection);
  await host.activate([{id:'minerva-ui',apply(ctx){ctx.slots.register('root.layout',{entryId:'default',component:({children}:{children:ReactNode})=><>{children}</>});}}]);
+ await host.activate([workspacePlugin(workspaceScope)]);
  return host;
 }
 export function UiSlot<K extends SlotName>({slot,scope,entryId,componentProps,fallback}: {slot:K;scope:Scope;entryId?:string;componentProps?:AppSlotProps[K];fallback?:ReactNode}){

@@ -1,15 +1,17 @@
+import { ScrollArea } from '../../components/ui/scroll-area';
 import {AttachmentPicker} from '../../harness/AttachmentPicker';
 import {SessionControls} from '../../harness/SessionControls';
+import {SessionFile} from '../../harness/SessionFile';
 import {SessionImage} from '../../harness/SessionImage';
 import {attachmentAdapter} from '../../harness/attachments';
 import {AttachmentPrimitive} from '@assistant-ui/react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '../../client.ts';
 import {
   AssistantRuntimeProvider, useLocalRuntime, ThreadPrimitive, AuiIf,
   MessagePrimitive, ComposerPrimitive, type ChatModelAdapter,
 } from '@assistant-ui/react';
-import { ArrowUp, MessageSquare, Plus, Puzzle } from 'lucide-react';
+import { ArrowUp, Plus, Puzzle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Select, SelectGroup, SelectLabel, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
 import '../../style.css';
@@ -25,10 +27,11 @@ import {UiSlot,workspaceScope,sessionScope} from "../../app/plugins";
 const SessionIdContext=React.createContext('');
 const SessionScopeContext=React.createContext(sessionScope("unselected"));
 function PluginTool(props:React.ComponentProps<typeof ToolHistory>){const scope=React.useContext(SessionScopeContext);return <UiSlot slot="tool.renderers" scope={scope} entryId={props.toolName} componentProps={{...props}} fallback={<ToolHistory {...props}/>}/>;}
+function HistoryFile(props:Omit<React.ComponentProps<typeof SessionFile>,'sessionId'>){return <SessionFile {...props} sessionId={React.useContext(SessionIdContext)}/>;}
 function HistoryImage(props:Omit<React.ComponentProps<typeof SessionImage>,'sessionId'>){return <SessionImage {...props} sessionId={React.useContext(SessionIdContext)}/>;}
 function Message({ role }: { role: 'user' | 'assistant' }) {
   const scope=React.useContext(SessionScopeContext);
-  const standard=<MessagePrimitive.Parts components={{Image:HistoryImage,tools:{Fallback:PluginTool},data:{Fallback:({data})=><details className="tool-history"><summary>Событие провайдера</summary><pre>{JSON.stringify(data,null,2)}</pre></details>},Reasoning:({text})=><details className="message-reasoning"><summary>Сводка рассуждений</summary><div>{text}</div></details>}}/>;
+  const standard=<MessagePrimitive.Parts components={{Image:HistoryImage,File:HistoryFile,tools:{Fallback:PluginTool},data:{Fallback:({data})=><details className="tool-history"><summary>Событие провайдера</summary><ScrollArea asChild><pre>{JSON.stringify(data,null,2)}</pre></ScrollArea></details>},Reasoning:({text})=><details className="message-reasoning"><summary>Сводка рассуждений</summary><div>{text}</div></details>}}/>;
   return <MessagePrimitive.Root className={`message ${role}`} data-role={role}>
     <div className="message-content"><div className="message-text"><UiSlot slot="message.renderers" scope={scope} entryId={role} componentProps={{children:standard}} fallback={standard}/><AuiIf condition={s=>s.message.status?.type==='incomplete'}><div className="message-interrupted">Ход не завершён. Сохранённые действия показаны выше.</div></AuiIf></div></div>
   </MessagePrimitive.Root>;
@@ -37,18 +40,19 @@ function Message({ role }: { role: 'user' | 'assistant' }) {
 function Thread({ model, configured, providers, pluginModels, onSelect,remoteRunning,onRemoteCancel }: { model: string; configured: boolean; providers: Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void;remoteRunning?:boolean;onRemoteCancel?:()=>void }) {
   const scope=React.useContext(SessionScopeContext);
   return <ThreadPrimitive.Root className="thread">
-    <ThreadPrimitive.Viewport className="viewport">
+    <ScrollArea asChild><ThreadPrimitive.Viewport className="viewport">
       <AuiIf condition={(state) => state.thread.isEmpty}><div className="empty">
         <img className="empty-portrait" src="/minerva-welcome.png" width={280} height={280} alt="Минерва — ваш ассистент"/>
         <h1>С чего начнём?</h1>
         <p>Задайте вопрос или расскажите, над чем работаете.</p>
       </div></AuiIf>
       <div className="messages"><ThreadPrimitive.Messages>{({ message }) => <Message role={message.role === "user" ? "user" : "assistant"}/>}</ThreadPrimitive.Messages></div>
-    </ThreadPrimitive.Viewport>
+    </ThreadPrimitive.Viewport></ScrollArea>
     <div className="composer-wrap">
       <ComposerPrimitive.Root className="composer">
-        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove aria-label={`Удалить ${attachment.name}`}>Удалить</AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="composer-input" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" />
+        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove asChild><Button type="button" variant="ghost" size="sm" aria-label={`Удалить ${attachment.name}`}>Удалить</Button></AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ScrollArea asChild><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="composer-input" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" /></ScrollArea>
         <div className="composer-bottom">
+          <AttachmentPicker disabled={!!remoteRunning} renderMenu={onClose=><UiSlot slot="composer.menu" scope={workspaceScope} componentProps={{sessionId:scope.kind==='session'?scope.sessionId:'',disabled:!!remoteRunning,onClose}}/>}/>
           <Select value={model || '__none'} onValueChange={value => onSelect(value === '__none' ? '' : value)}>
             <SelectTrigger className="composer-select" aria-label="Модель">
               <span className={configured ? "status-dot" : "status-dot unavailable"} aria-hidden="true"/>
@@ -63,7 +67,7 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
               {[...new Set(pluginModels.map(m=>m.group))].map(group=><SelectGroup key={`plugin:${group}`}><SelectLabel>{group}</SelectLabel>{pluginModels.filter(m=>m.group===group).map(m=><SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectGroup>)}
             </SelectContent>
           </Select>
-          <AttachmentPicker disabled={!!remoteRunning}/><UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>!state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Send className="send" aria-label="Отправить сообщение"><ArrowUp size={16}/></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Cancel className="send" aria-label="Остановить ответ">■</ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><button className="send" aria-label="Остановить ответ" onClick={onRemoteCancel}>■</button></AuiIf>
+          <UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>!state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Send asChild><Button size="icon" className="send" aria-label="Отправить сообщение"><ArrowUp size={16}/></Button></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Cancel asChild><Button size="icon" className="send" aria-label="Остановить ответ">■</Button></ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><Button variant="ghost" className="send" aria-label="Остановить ответ" onClick={onRemoteCancel}>■</Button></AuiIf>
         </div>
       </ComposerPrimitive.Root>
       {remoteRunning&&<AuiIf condition={state=>!state.thread.isRunning}><div role="status">Задача выполняется на сервере…</div></AuiIf>}
@@ -74,14 +78,16 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
 
 import {models} from "../../app/models";
 
-export function Chat({ model, configured, providers, pluginModels, onSelect, onProviders, activePlugins, onNew, session, sessions, onSession, onSaved, onError }: { model: string; configured: boolean; providers:Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void; onProviders:(p:Provider[])=>void; activePlugins:string[]; onNew:()=>void; session:SessionInfo; sessions:SessionInfo[]; onSession:(session:SessionInfo)=>void; onSaved:()=>void; onError:(message:string)=>void }) {
-  const run=React.useSyncExternalStore(models.runs.subscribe,models.runs.getSnapshot);
-  const running=run.running;
+export function Chat({ model, configured, providers, pluginModels, onSelect, onProviders, activePlugins, onNew, session, sessions, onSession, onSaved, onError }: { model: string; configured: boolean; providers:Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void; onProviders:(p:Provider[])=>void; activePlugins:string[]; onNew:(workspaceId?:string)=>void; session:SessionInfo; sessions:SessionInfo[]; onSession:(session:SessionInfo)=>void; onSaved:()=>void; onError:(message:string)=>void }) {
+  const [running,setRunningState]=useState(false);
+  const attached=useRef(true);
+  // Mark the observer detached before assistant-ui's passive cleanup aborts its adapter.
+  useLayoutEffect(()=>{attached.current=true;return ()=>{attached.current=false;};},[]);
   const localRun=useRef(false);
-  const setRunning=(running:boolean)=>{localRun.current=running;models.runs.baseline({...models.runs.getSnapshot(),running});};
+  const setRunning=(running:boolean)=>{localRun.current=running;if(attached.current)setRunningState(running);};
   const history=useMemo(()=>sessionHistory(session.id,onSaved,onError,invoke,{serverOwned:true}),[session.id]);
   const adapter = useMemo<ChatModelAdapter>(() => {
-    return chatAdapter({invoke,serverOwned:true,sessionId:session.id,model,history,onRunning:setRunning,onSaved,onError,
+    return chatAdapter({invoke,serverOwned:true,isAttached:()=>attached.current,sessionId:session.id,model,history,onRunning:setRunning,onSaved,onError,
       options:{}});
   }, [model, session.id, history]);
   const attachments=useMemo(()=>attachmentAdapter(session.id,invoke),[session.id]);
@@ -93,18 +99,18 @@ export function Chat({ model, configured, providers, pluginModels, onSelect, onP
     // Imported running messages are observations, not a locally owned adapter run.
     if(!localRun.current){
       runtime.thread.import({messages:remote.messages.map(decodeSessionMessage)});
-      models.runs.baseline({runId:remote.activeRun?.runId??null,parts:remote.activeRun?.parts??[],running:!!remote.activeRun});
+      setRunningState(!!remote.activeRun);
     }
   },[remote,runtime,running]);
   const cancelRemote=()=>{if(remote.activeRun)void invoke('runs.cancel',{sessionId:session.id,runId:remote.activeRun.runId}).catch(error=>onError(`Не удалось отменить задачу: ${String(error)}`));};
   const [view, setView] = useState<'chat' | 'plugins'>('chat');
   return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}><div className="oe-studio app-shell">
-    <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><img src="/minerva-64.png" width={32} height={32} alt="" style={{borderRadius:9}}/></div><div><strong>Minerva Harness</strong><small>AGENT WORKSPACE</small></div></div>
-      <div className="sidebar-section"><div className="side-heading">РАБОЧЕЕ ПРОСТРАНСТВО</div><Button variant="outline" className="new-chat" disabled={running} onClick={() => { setView('chat'); onNew(); }}><Plus data-icon="inline-start"/> Новая сессия</Button></div>
-      <div className="side-heading recent-heading">ДИАЛОГИ</div><div className="session-list" aria-label="История диалогов">{sessions.map(item=><button key={item.id} disabled={running} className={`nav-item ${view==='chat'&&item.id===session.id?'selected':''}`} title={item.title} onClick={()=>{setView('chat');onSession(item);}}><MessageSquare size={15}/><span>{item.title}</span></button>)}</div><div className="side-heading plugins-heading">РАСШИРЕНИЯ</div><button className={`nav-item ${view === "plugins" ? "selected" : ""}`} onClick={() => setView("plugins")}><Puzzle size={15}/><span>Плагины</span></button>
-      <UiSlot slot="navigation.items" scope={workspaceScope} componentProps={{session,onNew,onSession}}/><div className="sidebar-bottom"><Settings sessionId={session.id} providers={providers} onChange={onProviders} activePlugins={activePlugins}/></div>
-    </aside>
+    <ScrollArea asChild><aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><img src="/minerva-64.png" width={32} height={32} alt="" style={{borderRadius:9}}/></div><strong>minerva harness</strong></div>
+      <div className="sidebar-section"><Button variant="outline" className="new-chat" onClick={() => { setView('chat'); onNew(); }}><Plus data-icon="inline-start"/> Новая сессия</Button></div>
+      <Button variant="ghost" className={`nav-item ${view === "plugins" ? "selected" : ""}`} onClick={() => setView("plugins")}><Puzzle size={15}/><span>Плагины</span></Button>
+      <UiSlot slot="navigation.items" scope={workspaceScope} componentProps={{session,sessions,disabled:false,onNew:(workspaceId)=>{setView('chat');onNew(workspaceId);},onSession:(item)=>{setView('chat');onSession(item);}}}/><div className="sidebar-bottom"><Settings sessionId={session.id} providers={providers} onChange={onProviders} activePlugins={activePlugins}/></div>
+    </aside></ScrollArea>
     <main className="main"><header className="topbar"><div className="breadcrumbs"><span>Чат</span><span className="crumb-separator">/</span><strong>{view === "chat" ? session.title : "Плагины"}</strong></div><div className="top-status"><span className="status-dot"/> Rig · локально</div></header>
       <div className="chat-view" hidden={view !== "chat"}><SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun} onRemoteCancel={cancelRemote}/>}/></div>
       <UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>

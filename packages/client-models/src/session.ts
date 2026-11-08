@@ -44,6 +44,7 @@ export class SessionModel {
   else if(frame.eventType==='message.upsert'&&message(data)){const index=next.messages.findIndex(m=>m.id===data.id);next.messages=index<0?[...next.messages,data]:next.messages.map((m,i)=>i===index?data:m);const execution=this.runs.get(data.id);if(execution)next.messages=this.overlay(next.messages,execution);}
   else if(frame.eventType==='run.updated'&&run(data)&&data.sessionId===this.sessionId){this.runs.set(data.runId,data);next.messages=this.overlay(next.messages,data);next.activeRun=data.status==='running'?data:null;}
   else {this.resync();return;}
+  if(next.session)next.session={...next.session,hasMessages:next.messages.length>0};
   this.set(next);
  }
  dispose=()=>{this.generation++;this.ready=false;this.handle?.dispose();this.handle=undefined;this.runs.clear();this.set(empty());this.listeners.clear();};

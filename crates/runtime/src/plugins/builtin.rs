@@ -19,6 +19,13 @@ fn published<T: Service>(ctx: &Context) -> bool {
 }
 pub(super) const SYSTEM: &[SystemPlugin] = &[
     SystemPlugin {
+        id: "workspaces",
+        name: "Workspaces",
+        description: "Projects, folders and session membership.",
+        local_only: false,
+        active: published::<crate::workspaces::WorkspaceService>,
+    },
+    SystemPlugin {
         id: "sessions",
         name: "Сессии",
         description: "Хранение истории и событий диалога.",
@@ -144,9 +151,32 @@ impl Plugin for WorkspaceToolsPlugin {
             .effect_sync(move || {
                 owned.revoke_owner("native.workspace");
                 owned.revoke_owner("native.interaction");
+                owned.revoke_owner("native.attachments");
             })
             .map_err(apply_error)?;
         crate::tools::register_native(&tools).map_err(apply_error)?;
+        for (name, description, properties, required, side_effect) in [
+            ("read_attachment", "Read a session attachment in bounded byte chunks. UTF-8 text is returned directly; binary or split UTF-8 chunks use base64. Continue at nextOffset until eof.", json!({"id":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1024}}), vec!["id"], false),
+            ("save_attachment", "Copy a session attachment byte-for-byte to a new workspace file for processing (PDF, archive, spreadsheet, etc.). Never overwrites existing files.", json!({"id":{"type":"string"},"path":{"type":"string","minLength":1}}), vec!["id","path"], true),
+        ] {
+            let context = context.clone();
+            tools.register(if name=="read_attachment" {"native.attachments"} else {"native.workspace"}, crate::tools::ToolDefinition {
+                name:name.into(), description:description.into(),
+                input_schema:json!({"type":"object","properties":properties,"required":required,"additionalProperties":false}),
+                output_schema:json!({"type":"object"}), side_effect,
+            }, move |ctx,args| {
+                let context=context.clone();
+                Box::pin(async move {
+                    let id=args["id"].as_str().ok_or("missing attachment id")?;
+                    if name=="read_attachment" {
+                        context.read_attachment(&ctx.session_id,id,args["offset"].as_u64().unwrap_or(0) as usize,args["limit"].as_u64().unwrap_or(1024) as usize)
+                    } else {
+                        let attachment=context.get_attachment(&ctx.session_id,id)?;
+                        crate::tools::save_attachment(&ctx,args["path"].as_str().ok_or("missing path")?,&attachment.data)
+                    }
+                })
+            }).map_err(apply_error)?;
+        }
         tools.register("native.workspace", crate::tools::ToolDefinition {
             name: "load_skill".into(),
             description: "Load the instructions of an available workspace skill by name".into(),
@@ -234,6 +264,62 @@ mod tests {
             .definitions()
             .iter()
             .any(|t| t.name == "load_skill"));
+        let without_workspace = tools.snapshot().without_workspace().definitions();
+        assert!(without_workspace
+            .iter()
+            .any(|t| t.name == "read_attachment"));
+        assert!(!without_workspace
+            .iter()
+            .any(|t| t.name == "save_attachment"));
+        let reference = context
+            .put_attachment("s", "data.bin", "application/octet-stream", "AP+A")
+            .unwrap();
+        let mut call = crate::tools::ToolContext {
+            session_id: "s".into(),
+            run_id: "r".into(),
+            call_id: "c".into(),
+            cwd: Some(dir.path().to_path_buf()),
+            policy: crate::tools::PermissionPolicy::ReadOnly,
+            cancellation: crate::tools::Cancellation::default(),
+            interactions: interactions.clone(),
+            sink: None,
+        };
+        let args = json!({"id":reference.id,"path":"copy.bin"});
+        assert!(tools
+            .snapshot()
+            .execute("save_attachment", args.clone(), call.clone())
+            .await
+            .is_err());
+        call.policy = crate::tools::PermissionPolicy::Allow;
+        tools
+            .snapshot()
+            .execute("save_attachment", args.clone(), call.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("copy.bin")).unwrap(),
+            [0, 255, 128]
+        );
+        assert!(tools
+            .snapshot()
+            .execute("save_attachment", args.clone(), call.clone())
+            .await
+            .is_err());
+        assert!(tools
+            .snapshot()
+            .execute(
+                "save_attachment",
+                json!({"id":reference.id,"path":"../escape"}),
+                call.clone()
+            )
+            .await
+            .is_err());
+        call.session_id = "other".into();
+        assert!(tools
+            .snapshot()
+            .execute("read_attachment", json!({"id":reference.id}), call)
+            .await
+            .is_err());
         native.dispose().await.unwrap();
         assert!(ctx.try_service::<WorkspaceTools>().is_err());
         assert!(tools.snapshot().definitions().is_empty());

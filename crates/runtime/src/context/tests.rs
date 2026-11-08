@@ -105,6 +105,111 @@ fn summary_is_anchored_and_never_changes_history() {
 }
 
 #[test]
+fn generic_attachments_preserve_binary_empty_and_session_ownership() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.sqlite3");
+    let service = ContextService::open(&path).unwrap();
+    let bytes = [0, 255, 128, 42];
+    let reference = service
+        .put_attachment(
+            "one",
+            "archive.zip",
+            "application/zip",
+            &STANDARD.encode(bytes),
+        )
+        .unwrap();
+    assert!(service.get_attachment("two", &reference.id).is_err());
+    assert!(service
+        .put_attachment("one", "../bad", "text/plain", "YQ==")
+        .is_err());
+    assert!(service
+        .put_attachment("one", "bad", "text/plain\nheader", "YQ==")
+        .is_err());
+    let empty = service
+        .put_attachment("one", "empty.txt", "text/plain", "")
+        .unwrap();
+    assert_eq!(empty.bytes, 0);
+    let chunk = service.read_attachment("one", &reference.id, 1, 2).unwrap();
+    assert_eq!(chunk["encoding"], "base64");
+    assert_eq!(chunk["content"], STANDARD.encode([255, 128]));
+    assert_eq!(chunk["nextOffset"], 3);
+    assert_eq!(chunk["eof"], false);
+    assert!(service.read_attachment("two", &reference.id, 0, 1).is_err());
+    assert!(service.read_attachment("one", &reference.id, 5, 1).is_err());
+    assert!(service
+        .read_attachment("one", &reference.id, 0, 16385)
+        .is_err());
+    let text = service
+        .put_attachment("one", "notes.txt", "text/plain", &STANDARD.encode("hello"))
+        .unwrap();
+    assert_eq!(
+        service.read_attachment("one", &text.id, 0, 10).unwrap()["content"],
+        "hello"
+    );
+    let mut history = vec![message("u1", "user", "")];
+    history[0].parts = vec![crate::transcript::ContentPart {
+        kind: "file".into(),
+        data: json!(reference),
+    }];
+    let prepared = service.prepare("one", &history).unwrap();
+    assert_eq!(history[0].parts[0].kind, "file");
+    let prompt = &prepared.turns[0].parts[0].data["text"];
+    assert!(prompt.as_str().unwrap().contains(&reference.id));
+    assert!(prompt.as_str().unwrap().contains("read_attachment"));
+    assert!(!prompt.as_str().unwrap().contains(&STANDARD.encode(bytes)));
+    assert!(service.prepare("two", &history).is_err());
+    drop(service);
+    let reloaded = ContextService::open(&path)
+        .unwrap()
+        .get_attachment("one", &reference.id)
+        .unwrap();
+    assert_eq!(reloaded.data, STANDARD.encode(bytes));
+}
+
+#[test]
+fn attachment_chunks_survive_nested_json_projection_without_losing_bytes() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let dir = tempfile::tempdir().unwrap();
+    let service = ContextService::open(&dir.path().join("context.sqlite3")).unwrap();
+    for bytes in [
+        b"\\\"\n\r\t".repeat(1000),
+        vec![1; 5000],
+        vec![255; 5000],
+        "界".repeat(2000).into_bytes(),
+    ] {
+        let reference = service
+            .put_attachment(
+                "s",
+                &"\"".repeat(255),
+                "application/octet-stream",
+                &STANDARD.encode(&bytes),
+            )
+            .unwrap();
+        let mut offset = 0;
+        let mut restored = Vec::new();
+        loop {
+            let chunk = service
+                .read_attachment("s", &reference.id, offset, 1024)
+                .unwrap();
+            let wire = json!([{"type":"text","text":chunk.to_string()}]).to_string();
+            assert!(super::prune_text(&wire).is_none());
+            let content = chunk["content"].as_str().unwrap();
+            if chunk["encoding"] == "base64" {
+                restored.extend(STANDARD.decode(content).unwrap());
+            } else {
+                restored.extend(content.as_bytes());
+            }
+            if chunk["eof"] == true {
+                break;
+            }
+            offset = chunk["nextOffset"].as_u64().unwrap() as usize;
+        }
+        assert_eq!(restored, bytes);
+    }
+}
+
+#[test]
 fn attachment_is_decoded_durable_private_and_not_a_path() {
     use base64::Engine;
     let dir = tempfile::tempdir().unwrap();

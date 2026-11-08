@@ -143,7 +143,7 @@ impl SessionStore {
     }
     pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
         let db = self.connection.lock().map_err(|e| e.to_string())?;
-        let mut q=db.prepare("SELECT id,title,updated_at,model FROM sessions ORDER BY updated_at DESC,rowid DESC").map_err(|e|e.to_string())?;
+        let mut q=db.prepare("SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions ORDER BY updated_at DESC,rowid DESC").map_err(|e|e.to_string())?;
         let rows = q
             .query_map([], |r| {
                 Ok(SessionInfo {
@@ -151,6 +151,7 @@ impl SessionStore {
                     title: r.get(1)?,
                     updated_at: r.get(2)?,
                     model: r.get(3)?,
+                    has_messages: Some(r.get(4)?),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -160,7 +161,7 @@ impl SessionStore {
     pub fn get(&self, id: &str) -> Result<SessionInfo, String> {
         let db = self.connection.lock().map_err(|e| e.to_string())?;
         db.query_row(
-            "SELECT id,title,updated_at,model FROM sessions WHERE id=?1",
+            "SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions WHERE id=?1",
             [id],
             |r| {
                 Ok(SessionInfo {
@@ -168,6 +169,7 @@ impl SessionStore {
                     title: r.get(1)?,
                     updated_at: r.get(2)?,
                     model: r.get(3)?,
+                    has_messages: Some(r.get(4)?),
                 })
             },
         )
@@ -360,9 +362,19 @@ impl SessionStore {
             input.push(ContentPart::text("text", &request.message.text));
         }
         if let Some(images) = request.options["attachments"].as_array() {
-            input.extend(images.iter().cloned().map(|data| ContentPart {
-                kind: "image".into(),
-                data,
+            input.extend(images.iter().cloned().map(|data| {
+                ContentPart {
+                    kind: if matches!(
+                        data["mimeType"].as_str(),
+                        Some("image/png" | "image/jpeg" | "image/gif" | "image/webp")
+                    ) {
+                        "image"
+                    } else {
+                        "file"
+                    }
+                    .into(),
+                    data,
+                }
             }));
         }
         crate::transcript::Transcript {

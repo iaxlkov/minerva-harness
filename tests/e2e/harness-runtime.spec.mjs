@@ -6,14 +6,14 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {harnessModel} from '../fixtures/harness-model.mjs';
 
-async function runtime(page,context,body){
+async function runtime(page,context,body,desktop=false){
  const temp=await mkdtemp(path.join(os.tmpdir(),'minerva-harness-')),model=await harnessModel(),providerId=`harness${randomUUID().replaceAll('-','')}`;
  await mkdir(path.join(temp,'.agents/skills/fixture'),{recursive:true});
  await writeFile(path.join(temp,'AGENTS.md'),'WORKSPACE-DIRECTIVE: inspect fixture.txt before editing.');
  await writeFile(path.join(temp,'.agents/skills/fixture/SKILL.md'),'---\ndescription: fixture skill\n---\nSKILL-DIRECTIVE: keep exact fixture values.');
  await writeFile(path.join(temp,'fixture.txt'),'original fixture value');
  const env={...process.env};for(const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','DEEPSEEK_API_KEY'])delete env[key];
- const host=spawn(path.resolve('target/debug',process.platform==='win32'?'minerva-server.exe':'minerva-server'),['--bind','127.0.0.1:0','--data-dir',path.join(temp,'data'),'--config-dir',path.join(temp,'config'),'--web-dist',path.resolve('dist')],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+ const host=spawn(process.env.MINERVA_TEST_SERVER_EXE||path.resolve('target/debug',process.platform==='win32'?'minerva-server.exe':'minerva-server'),['--bind','127.0.0.1:0','--data-dir',path.join(temp,'data'),'--config-dir',path.join(temp,'config'),'--web-dist',path.resolve('dist')],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
  let rpc,configured=false;
  try{
   const launch=await new Promise((resolve,reject)=>{
@@ -26,10 +26,22 @@ async function runtime(page,context,body){
   const rawRpc=async(method,params={})=>{const boot=await (await context.request.get(`${origin}/api/v1/bootstrap`)).json();return await (await context.request.post(`${origin}/api/v1/rpc`,{headers:{Origin:origin,'X-Minerva-CSRF':boot.csrfToken},data:{protocolVersion:1,method,params}})).json();};
   rpc=async(method,params={})=>{const result=await rawRpc(method,params);expect(result.ok,JSON.stringify(result.error)).toBe(true);return result.value;};
   await rpc('save_model_provider',{provider:{id:providerId,name:'Harness fixture',baseUrl:model.url,models:['fixture'],apiKey:'disposable-fixture-key',isNew:true,protocol:'openai-chat'}});configured=true;
-  const [session]=await rpc('session_list');
+  const project=await rpc('workspaces.create',{path:temp});
+  const id=randomUUID();await rpc('session_create',{id,workspaceId:project.id});
+  const session=await rpc('session_get',{id});
   await rpc('session_set_model',{id:session.id,model:`api:${providerId}/fixture`});
-  const settings={cwd:temp,permissionPolicy:'ask',contextWindow:32768,autoCompact:true};
-  await rpc('workspace.save',{sessionId:session.id,settings});await page.reload();
+  const settings={cwd:project.path,permissionPolicy:'ask',contextWindow:32768,autoCompact:true};
+  await rpc('workspace.save',{sessionId:session.id,settings});
+  if(desktop){
+   await page.exposeFunction('desktopInvoke',(command,params)=>{
+    if(command==='harness_rpc')return rpc(params.method,params.params);
+    if(command==='run_start')return rpc('runs.start',params.request);
+    const methods={run_get:'runs.get',run_cancel:'runs.cancel',plugin_call:'plugins.call',plugin_models:'plugins.models',plugin_ui:'plugins.ui'};
+    return rpc(methods[command]??command,params);
+   });
+   await page.addInitScript(()=>{window.__TAURI_INTERNALS__={invoke:(command,params)=>window.desktopInvoke(command,params)};});
+  }
+  await page.reload();
   const send=async text=>{await page.getByRole('textbox',{name:'Сообщение ассистенту'}).fill(text);await page.getByRole('button',{name:'Отправить сообщение',exact:true}).click();};
   const saved=()=>rpc('session_load',{id:session.id});
   try{await body({temp,model,rpc,rawRpc,session,settings,send,saved});}catch(error){await test.info().attach('backend-state',{body:JSON.stringify({requests:model.requests,history:await saved(),session:await rpc('session_get',{id:session.id})},null,2),contentType:'application/json'});throw error;}
@@ -40,6 +52,25 @@ async function runtime(page,context,body){
   await rm(temp,{recursive:true,force:true});
  }
 }
+
+for(const desktop of [false,true])test(`switching chats keeps a background run alive and allows another chat to send (${desktop?'desktop':'web'})`,async({page,context})=>{
+ await runtime(page,context,async({model,rpc,session,send})=>{
+  model.steps.push({text:'First background result',prefix:'First is working',delay:5000},{text:'Second result'});
+  await send('First task');
+  await expect(page.locator('.message.assistant')).toContainText('First is working');
+  await page.getByRole('button',{name:'Новая сессия',exact:true}).click();
+  await expect(page.locator('.message')).toHaveCount(0);
+  await expect(page.getByRole('textbox',{name:'Сообщение ассистенту'})).toBeEnabled();
+  await send('Second task');
+  await expect(page.locator('.message.assistant')).toContainText('Second result');
+  const firstAssistant=(await rpc('session_load',{id:session.id})).find(item=>item.role==='assistant');
+  expect((await rpc('runs.get',{sessionId:session.id,runId:firstAssistant.id})).status).toBe('running');
+  await page.locator('.workspace-sessions button').filter({hasText:'First task'}).click();
+  await expect(page.locator('.message.assistant')).toContainText('First is working');
+  await expect(page.locator('.message.assistant')).toContainText('First background result');
+  expect((await rpc('session_load',{id:session.id})).some(item=>item.role==='assistant')).toBe(true);
+ },desktop);
+});
 
 test('real native tools, exact questions, approval allow/deny/cancel and durable execution cards',async({page,context})=>{
  await runtime(page,context,async({temp,model,rpc,session,send,saved})=>{
@@ -100,10 +131,39 @@ test('real shell stdout stays running until one terminal result and survives rel
  });
 });
 
+test('arbitrary files persist, download and are read or copied by session tools',async({page,context})=>{
+ await runtime(page,context,async({model,rpc,rawRpc,session,saved,send,temp,settings})=>{
+  const binary=Buffer.from([0,255,128,42]),text='attachment-text-marker';
+  const chooser=page.waitForEvent('filechooser');await page.getByRole('button',{name:'Добавить вложение'}).click();
+  await page.screenshot({path:'agent-artifacts/composer-menu.png'});
+  await page.getByRole('menuitem',{name:'Прикрепить файл'}).click();
+  await (await chooser).setFiles([{name:'archive.custom',mimeType:'application/octet-stream',buffer:binary},{name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from(text)}]);
+  model.steps.push({text:'Files attached'});await page.getByRole('button',{name:'Отправить сообщение',exact:true}).click();await expect(page.locator('.message.assistant')).toContainText('Files attached');
+  const files=(await saved()).flatMap(m=>m.parts).filter(p=>p.kind==='file');expect(files).toHaveLength(2);
+  const archive=files.find(p=>p.data.name==='archive.custom').data,notes=files.find(p=>p.data.name==='notes.txt').data;
+  expect(JSON.stringify(model.requests[0])).toContain('read_attachment');expect(JSON.stringify(model.requests[0])).not.toContain(text);expect(JSON.stringify(model.requests[0])).not.toContain(binary.toString('base64'));
+  await page.reload();const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:/archive.custom/}).click();const download=await downloadEvent;expect(await readFile(await download.path())).toEqual(binary);
+  const other=randomUUID();await rpc('session_create',{id:other});expect((await rawRpc('attachments.get',{sessionId:other,id:archive.id})).ok).toBe(false);
+  model.steps.push({tool:'read_attachment',id:'read-att',args:{id:notes.id}},{tool:'save_attachment',id:'save-att',args:{id:archive.id,path:'copied.bin'}},{text:'Files processed'});
+  await send('Read notes and copy archive');
+  await page.getByRole('button',{name:'Разрешить этот вызов'}).click();
+  await expect(page.locator('.message.assistant').last()).toContainText('Files processed');
+  expect(await readFile(path.join(temp,'copied.bin'))).toEqual(binary);
+  expect(JSON.stringify(model.requests)).toContain(text);
+  model.steps.push({tool:'save_attachment',id:'overwrite-att',args:{id:notes.id,path:'copied.bin'}},{text:'Overwrite refused'});
+  await send('Try overwrite');await page.getByRole('button',{name:'Разрешить этот вызов'}).click();await expect(page.locator('.message.assistant').last()).toContainText('Overwrite refused');
+  expect(await readFile(path.join(temp,'copied.bin'))).toEqual(binary);
+  await rpc('workspace.save',{sessionId:session.id,settings:{...settings,permissionPolicy:'read-only'}});
+  model.steps.push({tool:'save_attachment',id:'denied-att',args:{id:archive.id,path:'denied.bin'}},{text:'Policy enforced'});
+  await send('Try saving with read-only policy');await expect(page.locator('.message.assistant').last()).toContainText('Policy enforced');
+  expect(JSON.stringify(model.requests.at(-1))).toContain('read-only policy denies');
+ });
+});
+
 test('real image chooser persists private references and sends native model image content',async({page,context})=>{
  await runtime(page,context,async({model,rpc,rawRpc,session,saved})=>{
   const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=2;canvas.height=2;const drawing=canvas.getContext('2d');drawing.fillStyle='red';drawing.fillRect(0,0,2,2);return canvas.toDataURL('image/png').split(',')[1];});
-  const chooser=page.waitForEvent('filechooser');await page.getByRole('button',{name:'Прикрепить изображение'}).click();await (await chooser).setFiles({name:'fixture.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  const chooser=page.waitForEvent('filechooser');await page.getByRole('button',{name:'Добавить вложение'}).click();await page.getByRole('menuitem',{name:'Прикрепить файл'}).click();await (await chooser).setFiles({name:'fixture.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
   model.steps.push({text:'Image inspected'});await page.getByRole('button',{name:'Отправить сообщение',exact:true}).click();await expect(page.locator('.message.assistant')).toContainText('Image inspected');
   const history=await saved(),image=history.flatMap(message=>message.parts).find(part=>part.kind==='image');expect(image.data.id).toBeTruthy();expect(JSON.stringify(history)).not.toContain(png);
   expect(model.requests[0].messages.flatMap(message=>Array.isArray(message.content)?message.content:[]).find(part=>part.type==='image_url').image_url.url).toBe(`data:image/png;base64,${png}`);

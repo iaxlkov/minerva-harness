@@ -8,6 +8,7 @@ mod process_tree;
 pub use interaction::InteractionBroker;
 pub use minerva_plugin_sdk::tools::*;
 pub use native::register_native;
+pub(crate) use native::save_attachment;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,

@@ -37,9 +37,10 @@ impl ContextService {
             CREATE TABLE IF NOT EXISTS selected_skills (session TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(session,name));
             CREATE TABLE IF NOT EXISTS summaries (session TEXT PRIMARY KEY, prefix TEXT NOT NULL, summary TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, session TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL);").map_err(|e|e.to_string())?;
+        crate::workspaces::migrate(&db)?;
         Ok(Self { db: Mutex::new(db) })
     }
-    fn db(&self) -> Result<MutexGuard<'_, Connection>, String> {
+    pub(crate) fn db(&self) -> Result<MutexGuard<'_, Connection>, String> {
         self.db
             .lock()
             .map_err(|_| "context storage lock poisoned".into())
@@ -56,9 +57,18 @@ impl ContextService {
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        value
-            .map(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
-            .unwrap_or_else(|| Ok(WorkspaceSettings::default()))
+        let mut settings: WorkspaceSettings = value
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        if let Some(path) = self.project_path(session)? {
+            settings.cwd = path;
+        }
+        Ok(settings)
+    }
+    fn project_path(&self, session: &str) -> Result<Option<Option<String>>, String> {
+        self.db()?.query_row("SELECT p.path FROM projects p JOIN project_sessions s ON s.project=p.id WHERE s.session=?1", [session], |r|r.get(0)).optional().map_err(|e|e.to_string())
     }
     pub fn workspace_save(
         &self,
@@ -85,6 +95,11 @@ impl ContextService {
                     .ok_or("workspace path must be UTF-8")?
                     .to_owned(),
             );
+        }
+        if let Some(path) = self.project_path(session)? {
+            if settings.cwd != path {
+                return Err("Create a session in another workspace to change its folder".into());
+            }
         }
         let value = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
         self.db()?.execute("INSERT INTO workspace VALUES (?1,?2) ON CONFLICT(session) DO UPDATE SET settings=excluded.settings",params![session,value]).map_err(|e|e.to_string())?;
@@ -198,6 +213,13 @@ impl ContextService {
                     .unwrap_or_default(),
             };
             for part in &mut turn.parts {
+                if part.kind == "file" {
+                    let stored = self.get_attachment(session, part.data["id"].as_str().ok_or("Invalid file reference")?)?;
+                    *part = crate::transcript::ContentPart::text("text", &format!(
+                        "Attached file: {} ({} bytes, {}). Use read_attachment with id {} to read it on demand; binary chunks are base64. Use save_attachment to copy it to the workspace for processing with file tools.",
+                        serde_json::to_string(&stored.name).map_err(|e|e.to_string())?, stored.bytes, stored.mime_type, stored.id
+                    ));
+                }
                 if part.kind == "tool-result" {
                     if let Some(output) = part.data.get_mut("output") {
                         prune_output(output);

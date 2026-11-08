@@ -69,7 +69,7 @@ pub(crate) async fn run_inner(
     if messages.last().is_none_or(|m| {
         m.role != "user"
             || !m.parts.iter().any(|p| {
-                p.kind == "image"
+                matches!(p.kind.as_str(), "image" | "file")
                     || p.kind == "text"
                         && p.data["text"]
                             .as_str()

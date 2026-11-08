@@ -5,6 +5,15 @@ const root = { kind: 'root' };
 const session = { kind: 'session', workspaceId: 'w', sessionId: 's' };
 const component = () => null;
 const entry = (ownerPluginId, entryId = ownerPluginId) => ({ ownerPluginId, entryId, component });
+test('composer menu contributions are ordered, scoped and disposed with their plugin', async () => {
+  const host = new BrowserPluginHost();
+  const scope={kind:'workspace',workspaceId:'w'};
+  await host.activate([{id:'files',apply(ctx){ctx.scope(scope).slots.register('composer.menu',{entryId:'file',component});}}]);
+  assert.equal(host.slots.entries('composer.menu',scope)[0].entryId,'file');
+  assert.equal(host.slots.entries('composer.menu',{...scope,workspaceId:'other'}).length,0);
+  await host.disable('files');
+  assert.equal(host.slots.entries('composer.menu',scope).length,0);
+});
 test('slots reject unknown names, duplicate single providers, and scope mismatch', () => {
   const slots = new SlotRegistry();
   assert.throws(() => slots.register('bogus', root, entry('a')), /Unknown slot/);

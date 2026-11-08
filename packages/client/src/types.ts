@@ -1,5 +1,7 @@
 export type ApiError = { code: string; message: string; requestId: string };
 export type ApiResult<T> = {ok:true;value:T}|{ok:false;error:ApiError};
+export type {WorkspaceInfo} from './generated';
+import type {WorkspaceInfo} from './generated';
 export type WorkspaceRef = {workspaceId:string};
 export type Bootstrap = {protocolVersion:1;csrfToken:string;principal:{id:string};workspace:{id:string};capabilities:string[]};
 export type { ContentPart, SessionInfo, SessionMessage, StartRunRequest, RunHandle, RunSnapshot,
@@ -14,6 +16,11 @@ export type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnsw
 type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
+ 'session.snapshot':Endpoint<{sessionId:string},import('./generated').SessionBaseline>;
+ 'workspaces.list':Endpoint<Empty,WorkspaceInfo[]>;
+ 'workspaces.rename':Endpoint<{id:string;title:string},null>;
+ 'workspaces.remove':Endpoint<{id:string},null>;
+ 'workspaces.create':Endpoint<{path:string},WorkspaceInfo>;
  'workspace.get':Endpoint<{sessionId:string},WorkspaceSettings>;
  'workspace.save':Endpoint<{sessionId:string;settings:WorkspaceSettings},WorkspaceSettings>;
  'tools.list':Endpoint<{sessionId:string},ToolDefinition[]>;
@@ -32,7 +39,7 @@ export interface Endpoints {
  'runs.start':Endpoint<StartRunRequest,RunHandle>;
  'runs.get':Endpoint<RunHandle,RunSnapshot>;
  'runs.cancel':Endpoint<RunHandle,boolean>;
- session_list:Endpoint<Empty,SessionInfo[]>; session_create:Endpoint<{id:string},void>;
+ session_list:Endpoint<Empty,SessionInfo[]>; session_create:Endpoint<{id:string;workspaceId?:string},void>;
  session_get:Endpoint<{id:string},SessionInfo>; session_load:Endpoint<{id:string},SessionMessage[]>;
  session_save:Endpoint<{id:string;item:SessionMessage},void>; session_set_model:Endpoint<{id:string;model:string},void>;
  session_run:Endpoint<{id:string;request:RunRequest},RunReply>; session_cancel:Endpoint<{id:string;runId:string},boolean>;

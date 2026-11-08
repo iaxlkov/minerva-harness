@@ -86,7 +86,7 @@ export class ExternalClientModules {
           if (!this.current(id, entry)) throw Error('Disposed plugin context');
           const ownership = new Ownership(); entry.ownership = ownership;
           root.effect(() => ownership.dispose());
-          const context = new BrowserPluginContext(id, { kind: 'workspace', workspaceId: this.options.workspaceId }, host.slots, host.services, ownership);
+          const context = new BrowserPluginContext(id, { kind: 'workspace', workspaceId: this.options.workspaceId }, host.slots, host.services, ownership, host.contextMenus);
           let alive = true;
           context.effect(() => { alive = false; });
           const rpc = async (method: string, params: unknown = {}) => {

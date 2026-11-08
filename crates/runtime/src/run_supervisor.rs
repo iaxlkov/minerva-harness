@@ -109,7 +109,7 @@ impl AgentLoopService {
                 serde_json::from_value(value.clone())
                     .map_err(|_| "Invalid attachment references")?;
             if supplied.len() > 8 {
-                return Err("At most eight images can be sent in one message".into());
+                return Err("At most eight attachments can be sent in one message".into());
             }
             let mut total = 0usize;
             let mut canonical = Vec::new();
@@ -122,7 +122,7 @@ impl AgentLoopService {
                     .checked_add(stored.bytes)
                     .ok_or("Attachment size overflow")?;
                 if total > 20 * 1024 * 1024 {
-                    return Err("Combined image size exceeds 20 MiB".into());
+                    return Err("Combined attachment size exceeds 20 MiB".into());
                 }
                 canonical.push(minerva_plugin_sdk::context::AttachmentRef {
                     id: stored.id,

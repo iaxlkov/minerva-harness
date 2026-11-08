@@ -18,6 +18,65 @@ struct Host {
     jar: Arc<reqwest::cookie::Jar>,
     _dir: tempfile::TempDir,
 }
+
+#[tokio::test]
+async fn workspaces_are_system_owned_and_sessions_inherit_the_selected_directory() {
+    let host = Host::start().await;
+    let csrf = host.login().await;
+    let initial = host.rpc(&csrf, "workspaces.list", json!({})).await;
+    assert_eq!(initial["value"][0]["id"], "default");
+    let project = host
+        .rpc(&csrf, "workspaces.create", json!({"path":host._dir.path()}))
+        .await;
+    assert_eq!(project["ok"], true);
+    let project = &project["value"];
+    let created = host
+        .rpc(
+            &csrf,
+            "session_create",
+            json!({"id":"project-session","workspaceId":project["id"]}),
+        )
+        .await;
+    assert_eq!(created["ok"], true);
+    let settings = host
+        .rpc(
+            &csrf,
+            "workspace.get",
+            json!({"sessionId":"project-session"}),
+        )
+        .await;
+    assert_eq!(settings["value"]["cwd"], project["path"]);
+    let list = host.rpc(&csrf, "workspaces.list", json!({})).await;
+    assert!(list["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == project["id"] && p["sessionIds"] == json!(["project-session"])));
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "session_create",
+            json!({"id":"invalid-project","workspaceId":"unknown"})
+        )
+        .await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(&csrf, "session_get", json!({"id":"invalid-project"}))
+            .await["ok"],
+        false
+    );
+    assert_eq!(
+        host.rpc(
+            &csrf,
+            "set_plugin_enabled",
+            json!({"id":"workspaces","enabled":false})
+        )
+        .await["ok"],
+        false
+    );
+    host.close().await;
+}
 impl Host {
     async fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();

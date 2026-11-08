@@ -1,3 +1,4 @@
+import { ScrollArea } from '../../components/ui/scroll-area';
 import type { PluginInfo } from '../../../../../packages/client/src/types.ts';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Boxes, RotateCw } from 'lucide-react';
@@ -32,7 +33,7 @@ export function Plugins() {
     finally { setBusy(null); }
   }
   if (showShell) return <Shell onBack={() => setShowShell(false)}/>;
-  return <section className="plugins-screen" aria-labelledby="plugins-title">
+  return <ScrollArea asChild><section className="plugins-screen" aria-labelledby="plugins-title">
     <div className="plugins-header"><div><h1 id="plugins-title">Плагины</h1><p>Встроенные и установленные расширения рабочего пространства.</p></div><Button variant="outline" onClick={() => void refresh()} aria-label="Обновить список"><RotateCw data-icon="inline-start"/> Обновить</Button></div>
     {error && <div className="plugins-error" role="alert">{error}</div>}
     {!error && rosterError && <div className="plugins-error" role="alert">Не удалось обновить список плагинов: {rosterError}</div>}
@@ -44,5 +45,5 @@ export function Plugins() {
       {plugin.id === 'plugin-manager' ? <Button variant="outline" role="switch" aria-label="Несистемные плагины" aria-checked={plugin.optionalEnabled} aria-busy={busy === plugin.id} disabled={busy !== null} onClick={() => void toggleOptional(!plugin.optionalEnabled)}>Несистемные плагины: {busy === plugin.id ? 'Подождите…' : plugin.optionalEnabled ? 'включены' : 'приостановлены'}</Button> : plugin.id === "shell" ? <Button variant="outline" onClick={() => setShowShell(true)}>Настроить</Button> : plugin.canToggle ? <><Button variant="outline" disabled={busy !== null} onClick={() => void toggle(plugin)}>{busy === plugin.id ? 'Подождите…' : plugin.enabled || (!plugin.optionalEnabled && plugin.requestedEnabled) ? 'Отключить' : plugin.error && plugin.optionalEnabled ? 'Повторить запуск' : 'Включить'}</Button>{plugin.error && !plugin.enabled && plugin.optionalEnabled && <Button variant="outline" disabled={busy !== null} onClick={()=>void toggle(plugin,false)}>Отключить автозапуск</Button>}</> : <span className="plugin-required">Обязательный</span>}
     </article>)}</div>}
     <p className="plugins-note">Установленные расширения включаются отдельно для этого рабочего пространства.</p>
-  </section>;
+  </section></ScrollArea>;
 }

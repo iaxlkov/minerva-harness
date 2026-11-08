@@ -113,7 +113,7 @@ impl Transcript {
         for part in &self.parts {
             match part.kind.as_str() {
                 "text" | "reasoning" if part.data["text"].is_string() => {}
-                "image" => {
+                "image" | "file" => {
                     let image: crate::context::AttachmentRef =
                         serde_json::from_value(part.data.clone())
                             .map_err(|_| "Invalid image reference")?;
@@ -127,11 +127,17 @@ impl Transcript {
                         || image.name.len() > 255
                         || image.name.contains(['/', '\\'])
                         || image.name.chars().any(char::is_control)
-                        || !matches!(
-                            image.mime_type.as_str(),
-                            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
-                        )
-                        || image.bytes == 0
+                        || (part.kind == "image"
+                            && !matches!(
+                                image.mime_type.as_str(),
+                                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                            ))
+                        || image.mime_type.is_empty()
+                        || image.mime_type.len() > 255
+                        || !image.mime_type.is_ascii()
+                        || image.mime_type.chars().any(char::is_control)
+                        || !image.mime_type.contains('/')
+                        || (part.kind == "image" && image.bytes == 0)
                         || image.bytes > 10 * 1024 * 1024
                         || part.data.get("url").is_some()
                     {

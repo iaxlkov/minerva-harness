@@ -29,6 +29,13 @@ struct Id {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CreateSession {
+    id: String,
+    #[serde(rename = "workspaceId")]
+    workspace_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Model {
     id: String,
     model: String,
@@ -177,7 +184,12 @@ pub(crate) async fn dispatch(
     params: Value,
 ) -> Result<Value, DispatchError> {
     match method {
-        "workspace.get"
+        "session.snapshot"
+        | "workspaces.list"
+        | "workspaces.rename"
+        | "workspaces.remove"
+        | "workspaces.create"
+        | "workspace.get"
         | "workspace.save"
         | "tools.list"
         | "interactions.list"
@@ -224,8 +236,8 @@ pub(crate) async fn dispatch(
             encoded(runtime.sessions.list()?)
         }
         "session_create" => {
-            let a: Id = args(params)?;
-            runtime.sessions.create(&a.id)?;
+            let a: CreateSession = args(params)?;
+            runtime.create_session(&a.id, a.workspace_id.as_deref())?;
             Ok(Value::Null)
         }
         "session_get" => {

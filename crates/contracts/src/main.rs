@@ -54,6 +54,7 @@ fn main() {
         ShellSettings,
         ShellResult,
         WorkspaceSettings,
+        minerva_runtime::workspaces::WorkspaceInfo,
         SkillInfo,
         ContextBudget,
         ContextSummary,

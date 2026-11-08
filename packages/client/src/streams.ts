@@ -1,8 +1,30 @@
 /** Session subscriptions own observation only: closing one never cancels a run. */
+import type {Invoke} from './types.ts';
 export type StreamHandle={dispose():void;reconnect():void};
 export type SessionStream={follow(sessionId:string,receive:(frame:unknown)=>void):Promise<StreamHandle>};
 export type StreamSocket={send(data:string):void;close():void;onopen:((event:unknown)=>void)|null;onmessage:((event:{data:unknown})=>void)|null;onclose:((event:{code:number})=>void)|null;onerror:((event:unknown)=>void)|null};
 export type StreamOptions={url?:string;workspaceId?:string;webSocketFactory?:(url:string)=>StreamSocket;setTimeout?:(fn:()=>void,ms:number)=>unknown;clearTimeout?:(timer:unknown)=>void;maxRetries?:number};
+/** Desktop has no WebSocket endpoint; read the same atomic projection over IPC. */
+export function createDesktopSessionStream(invoke:Invoke):SessionStream {
+ return {async follow(sessionId,receive){
+  let disposed=false,generation=0,cursor:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;
+  async function refresh(){
+   if(disposed)return;
+   const epoch=++generation;
+   try{
+    const snapshot=await invoke('session.snapshot',{sessionId});
+    if(disposed||epoch!==generation)return;
+    if(snapshot.cursor!==cursor){cursor=snapshot.cursor;receive({kind:'baseline',sessionId,snapshot});}
+   }catch(error){
+    if(disposed||epoch!==generation)return;
+    cursor=undefined;receive({kind:'disconnected',sessionId,error:String(error)});
+   }
+   if(!disposed&&epoch===generation)timer=setTimeout(()=>void refresh(),500);
+  }
+  void refresh();
+  return {dispose(){disposed=true;generation++;clearTimeout(timer);},reconnect(){cursor=undefined;clearTimeout(timer);void refresh();}};
+ }};
+}
 export function createSessionStream(options:StreamOptions={}):SessionStream {
  const factory=options.webSocketFactory??((url:string)=>new WebSocket(url) as unknown as StreamSocket);
  const schedule=options.setTimeout??((fn,ms)=>globalThis.setTimeout(fn,ms));

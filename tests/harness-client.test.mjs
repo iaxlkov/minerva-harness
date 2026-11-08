@@ -17,5 +17,16 @@ test('attachment upload stores only durable references in composer content',asyn
  assert.equal(calls[0][0],'attachments.put');assert.equal(calls[0][1].sessionId,'session');
  assert.deepEqual(complete.content[0].providerMetadata.minerva.attachment,ref);
  assert.equal(JSON.stringify(complete.content).includes('base64'),false);
- await assert.rejects(()=>adapter.add({file:new File(['svg'],'bad.svg',{type:'image/svg+xml'})}),/PNG/);
+ assert.equal((await adapter.add({file:new File(['svg'],'drawing.svg',{type:'image/svg+xml'})})).type,'file');
+ await assert.rejects(()=>adapter.add({file:new File([new Uint8Array(10*1024*1024+1)],'large.bin')}),/10/);
+});
+test('generic files use opaque references and preserve original upload bytes',async()=>{
+ const bytes=new Uint8Array([0,255,128,42]);let uploaded;
+ const adapter=attachmentAdapter('s',async(method,args)=>{uploaded=args;return {id:'file',name:args.name,mimeType:args.mimeType,bytes:4};});
+ const file=await adapter.add({file:new File([bytes],'unknown.custom')});
+ assert.equal(file.type,'file');assert.equal(file.contentType,'application/octet-stream');
+ const sent=await adapter.send(file);
+ assert.equal(uploaded.data,Buffer.from(bytes).toString('base64'));
+ assert.equal(sent.content[0].type,'file');assert.equal(sent.content[0].data,'');
+ assert.equal(sent.content[0].providerMetadata.minerva.attachment.id,'file');
 });

@@ -20,6 +20,7 @@ pub mod sessions;
 pub mod shell;
 pub mod tools;
 pub mod transcript;
+pub mod workspaces;
 pub use config::RuntimeConfig;
 use plugins::PluginManager;
 use sessions::SessionService;
@@ -100,6 +101,17 @@ impl Runtime {
                 ))
                 .await
                 .map_err(|e| RuntimeError::Database(e.to_string()))?,
+            );
+            fibers.push(
+                ctx.spawn(cordis::PreparedPlugin::from_input(
+                    workspaces::WorkspacePlugin {
+                        root: config.data_dir.join("default-workspace"),
+                        local: plugins.harness.local,
+                    },
+                    (),
+                ))
+                .await
+                .map_err(|e| RuntimeError::Bootstrap(e.to_string()))?,
             );
             fibers.push(
                 ctx.spawn(cordis::PreparedPlugin::from_input(
@@ -215,7 +227,7 @@ mod runtime_services_tests {
                 .unwrap()
         ));
         let roster = serde_json::to_value(runtime.plugins.list().await.unwrap()).unwrap();
-        for id in ["sessions", "agent-loop"] {
+        for id in ["sessions", "agent-loop", "workspaces"] {
             let row = roster
                 .as_array()
                 .unwrap()
@@ -227,7 +239,13 @@ mod runtime_services_tests {
             assert!(runtime.plugins.set_enabled(id, false).await.is_err());
         }
         runtime.sessions.create("persisted").unwrap();
+        let workspaces = runtime
+            .plugins
+            .context()
+            .try_service::<workspaces::WorkspaceService>()
+            .unwrap();
         runtime.shutdown().await.unwrap();
+        assert!(workspaces.list().is_err());
         assert!(runtime
             .plugins
             .context()

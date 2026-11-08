@@ -6,7 +6,7 @@ use serde_json::Value;
 pub(crate) fn baseline(db: &Connection, id: &str) -> Result<SessionBaseline, String> {
     let session = db
         .query_row(
-            "SELECT id,title,updated_at,model FROM sessions WHERE id=?1",
+            "SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions WHERE id=?1",
             [id],
             |r| {
                 Ok(SessionInfo {
@@ -14,6 +14,7 @@ pub(crate) fn baseline(db: &Connection, id: &str) -> Result<SessionBaseline, Str
                     title: r.get(1)?,
                     updated_at: r.get(2)?,
                     model: r.get(3)?,
+                    has_messages: Some(r.get(4)?),
                 })
             },
         )

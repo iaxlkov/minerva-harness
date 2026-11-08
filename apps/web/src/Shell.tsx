@@ -1,3 +1,4 @@
+import { ScrollArea } from './components/ui/scroll-area';
 import type { ShellSettings as Settings, ShellResult as Result } from '../../../packages/client/src/types.ts';
 import React, { useEffect, useState } from 'react';
 import { invoke } from './client.ts';
@@ -25,8 +26,8 @@ export function Shell({ onBack }: { onBack: () => void }) {
     try { setResult(await invoke('run_shell_command', { command })); }
     catch (cause) { setError(String(cause)); } finally { setBusy(false); }
   }
-  return <section className="shell-screen" aria-labelledby="shell-title">
-    <div className="shell-content"><button type="button" className="shell-back" onClick={onBack}><ArrowLeft size={15}/> Плагины</button>
+  return <ScrollArea asChild><section className="shell-screen" aria-labelledby="shell-title">
+    <div className="shell-content"><Button variant="ghost" type="button" className="shell-back" onClick={onBack}><ArrowLeft size={15}/> Плагины</Button>
       <div className="shell-heading"><div className="shell-icon"><TerminalSquare size={21}/></div><div><h1 id="shell-title">Командная оболочка</h1><p>Настройки встроенного плагина Cordis.</p></div></div>
       {error && <div className="shell-error" role="alert">{error}</div>}
       {!settings && !error && <div role="status">Загрузка настроек…</div>}
@@ -37,8 +38,8 @@ export function Shell({ onBack }: { onBack: () => void }) {
       </div>}
       <div className="shell-console"><div className="shell-console-title"><TerminalSquare size={16}/> Проверка команды <span>PowerShell · один запуск</span></div>
         <form onSubmit={run} className="shell-command"><span aria-hidden="true">›</span><input aria-label="Команда PowerShell" placeholder="Введите команду PowerShell…" value={command} onChange={e => setCommand(e.target.value)} disabled={busy}/><Button type="submit" disabled={busy || !command.trim()}>{busy ? 'Выполняется…' : 'Выполнить'}</Button></form>
-        {result && <div className="shell-result" role="status"><div className="shell-result-meta">{result.timedOut ? 'Превышен тайм-аут оболочки' : `Код завершения: ${result.exitCode ?? 'неизвестен'}`}</div>{result.stdout && <pre>{result.stdout}</pre>}{result.stderr && <pre className="shell-stderr">{result.stderr}</pre>}{result.stdoutFile && <p>Полный stdout: {result.stdoutFile}</p>}{result.stderrFile && <p>Полный stderr: {result.stderrFile}</p>}</div>}
+        {result && <div className="shell-result" role="status"><div className="shell-result-meta">{result.timedOut ? 'Превышен тайм-аут оболочки' : `Код завершения: ${result.exitCode ?? 'неизвестен'}`}</div>{result.stdout && <ScrollArea asChild><pre>{result.stdout}</pre></ScrollArea>}{result.stderr && <ScrollArea asChild><pre className="shell-stderr">{result.stderr}</pre></ScrollArea>}{result.stdoutFile && <p>Полный stdout: {result.stdoutFile}</p>}{result.stderrFile && <p>Полный stderr: {result.stderrFile}</p>}</div>}
       </div><p className="shell-note">Команды запускаются вручную с правами текущего пользователя. Тайм-аут завершает процесс оболочки; дочерние процессы могут продолжить работу. Интерактивный терминал и вызов агентом пока не подключены.</p>
     </div>
-  </section>;
+  </section></ScrollArea>;
 }

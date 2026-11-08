@@ -74,8 +74,12 @@ fn session_list(store: tauri::State<'_, Arc<SessionService>>) -> Result<Vec<Sess
     store.list()
 }
 #[tauri::command]
-fn session_create(store: tauri::State<'_, Arc<SessionService>>, id: String) -> Result<(), String> {
-    store.create(&id)
+fn session_create(
+    runtime: tauri::State<'_, Arc<Runtime>>,
+    id: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    runtime.create_session(&id, workspace_id.as_deref())
 }
 #[tauri::command]
 fn session_get(
@@ -200,6 +204,7 @@ async fn run_shell_command(
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let icon = app
                 .default_window_icon()

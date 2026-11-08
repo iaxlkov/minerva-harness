@@ -251,7 +251,7 @@ impl ProviderService {
         }
         if !matches!(
             input.protocol.as_str(),
-            "openai-chat" | "openai-responses" | "anthropic-messages"
+            "openai-chat" | "openai-responses" | "anthropic-messages" | "ollama"
         ) {
             return Err("Неизвестный протокол API.".into());
         }
@@ -273,6 +273,10 @@ impl ProviderService {
         if let Some(existing) = providers.iter().find(|p| p.id == input.id) {
             if (existing.base_url.trim_end_matches('/') != input.base_url.trim_end_matches('/')
                 || existing.protocol != input.protocol)
+                && !(existing.protocol == "ollama"
+                    && input.protocol == "ollama"
+                    && self.credentials.get(&self.scope, &input.id)?.is_none()
+                    && self.env_key(&input.id, &existing.base_url).is_none())
                 && !input
                     .api_key
                     .as_ref()
@@ -366,11 +370,12 @@ impl ProviderService {
                     }
                 })
                 .or_else(|| self.env_key(&input.id, &input.base_url))
+                .or_else(|| (input.protocol == "ollama").then(|| "ollama".into()))
                 .ok_or("Введите API-ключ для указанного адреса.")?
         };
         let request = async {
             match input.protocol.as_str() {
-                "openai-chat" | "openai-responses" => {
+                "openai-chat" | "openai-responses" | "ollama" => {
                     OpenAIConfig::new(key)
                         .with_base_url(input.base_url)
                         .client()
@@ -459,6 +464,7 @@ impl ProviderService {
                 .credentials
                 .get(&self.scope, id)?
                 .or_else(|| self.env_key(id, &provider.base_url))
+                .or_else(|| (provider.protocol == "ollama").then(|| "ollama".into()))
                 .ok_or("API key not configured")?;
             (provider, key)
         };
@@ -554,7 +560,7 @@ impl ProviderService {
             }};
         }
         match provider.protocol.as_str() {
-            "openai-chat" => run_agent!(OpenAIConfig::new(key)
+            "openai-chat" | "ollama" => run_agent!(OpenAIConfig::new(key)
                 .with_base_url(provider.base_url)
                 .client()
                 .chat(model)),
@@ -636,6 +642,36 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn ollama_discovers_without_key_and_guards_saved_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = ProviderService::new_with_store(
+            dir.path().join("providers.json"), CredentialScope::new("test").unwrap(),
+            Arc::new(crate::credential_store::MemoryCredentialStore::default()), EndpointPolicy::Local,
+        ).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).unwrap();
+            assert!(String::from_utf8_lossy(&buf[..n]).starts_with("GET /v1/models "));
+            let body = r#"{"object":"list","data":[{"id":"qwen3:8b","object":"model","created":1,"owned_by":"library"}]}"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        });
+        let draft = |url: &str, key: Option<&str>, is_new| ProviderInput {
+            id: "ollama".into(), protocol: "ollama".into(), ..input(url, key, is_new)
+        };
+        assert_eq!(service.discover(draft(&endpoint, None, true)).await.unwrap(), vec!["qwen3:8b"]);
+        server.join().unwrap();
+        service.save(draft(&endpoint, None, true)).await.unwrap();
+        assert!(!service.list().await[0].has_key);
+        let other = "http://127.0.0.1:11435/v1";
+        service.save(draft(other, None, false)).await.unwrap();
+        service.save(draft(other, Some("proxy-key"), false)).await.unwrap();
+        assert!(service.save(draft(&endpoint, None, false)).await.is_err());
+    }
+    #[tokio::test]
     async fn scoped_provider_crud_and_changed_endpoint_do_not_leak_keys() {
         use crate::credential_store::MemoryCredentialStore;
         let dir = tempfile::tempdir().unwrap();
@@ -711,6 +747,11 @@ mod tests {
     #[tokio::test]
     async fn all_protocols_keep_unavailable_tools_as_context_on_their_own_wires() {
         let fixtures = [
+            (
+                "ollama",
+                "/v1/chat/completions",
+                serde_json::json!({"id":"r","object":"chat.completion","created":1,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"wire reply"},"finish_reason":"stop"}]}),
+            ),
             (
                 "openai-chat",
                 "/v1/chat/completions",
@@ -807,7 +848,7 @@ mod tests {
                     name: "Test".into(),
                     base_url,
                     models: vec!["test-model".into()],
-                    api_key: Some("local-only-test-key".into()),
+                    api_key: (protocol != "ollama").then(|| "local-only-test-key".into()),
                     is_new: true,
                     protocol: protocol.into(),
                 })

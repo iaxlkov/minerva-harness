@@ -22,6 +22,11 @@ export function transcriptContent(parts: ContentPart[]): ThreadAssistantMessage[
         const status=result?(data.status==='cancelled'||data.status==='failed'?data.status:result.isError?'failed':'completed'):data.status;
         return [{ type: 'tool-call', toolCallId: data.callId, toolName: data.name, args, argsText: JSON.stringify(args), providerMetadata:{minerva:{...(status!==undefined?{status}:{}),...(data.meta!==undefined?{meta:data.meta}:{}),...(result?.meta!==undefined?{resultMeta:result.meta}:{})}}, ...(result ? { result: { output: result.output }, isError: result.isError } : {}) }];
       }
+      case 'file': {
+        if(!data||typeof data.id!=='string'||typeof data.name!=='string'||typeof data.bytes!=='number'||typeof data.mimeType!=='string')throw Error('Некорректное вложение истории');
+        const {id,name,mimeType,bytes}=data;
+        return [{type:'file',data:'',filename:name,mimeType,providerMetadata:{minerva:{attachment:{id,name,mimeType,bytes}}}}];
+      }
       case 'image': {
         if(!data||typeof data.id!=='string'||typeof data.name!=='string'||typeof data.bytes!=='number'||typeof data.mimeType!=='string'||!['image/png','image/jpeg','image/gif','image/webp'].includes(data.mimeType))throw Error('Некорректное изображение истории');
         const {id,name,mimeType,bytes}=data;

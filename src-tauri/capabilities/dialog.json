@@ -1,0 +1,6 @@
+{
+  "identifier": "workspace-folder-dialog",
+  "description": "Allow the main local window to choose a workspace directory.",
+  "windows": ["main"],
+  "permissions": ["dialog:allow-open"]
+}

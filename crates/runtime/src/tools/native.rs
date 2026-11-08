@@ -103,6 +103,38 @@ fn read_prefix(dir: &cap_std::fs::Dir, path: &Path) -> Result<(String, bool), St
 fn schema(properties: Value, required: Vec<&str>) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
+pub(crate) fn save_attachment(ctx: &ToolContext, path: &str, data: &str) -> Result<Value, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(error)?;
+    let (dir, relative) = contained(ctx, path, true)?;
+    let parent = dir
+        .open_dir(
+            relative
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )
+        .map_err(error)?;
+    let name = relative.file_name().ok_or("missing filename")?;
+    if ctx.cancellation.is_cancelled() {
+        return Err("tool cancelled".into());
+    }
+    // create_new protects existing workspace files and rejects a raced symlink.
+    let mut file = parent
+        .open_with(
+            name,
+            cap_std::fs::OpenOptions::new().write(true).create_new(true),
+        )
+        .map_err(error)?;
+    if let Err(e) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = parent.remove_file(name);
+        return Err(error(e));
+    }
+    Ok(json!({"path":path,"bytes":bytes.len()}))
+}
 pub fn register_native(registry: &ToolRegistry) -> Result<(), String> {
     let defs=[
         ("read_file","Read a UTF-8 workspace file",schema(json!({"path":{"type":"string"}}),vec!["path"]),false),
