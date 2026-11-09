@@ -1,3 +1,7 @@
+import {Input} from '../components/ui/input';
+import * as sidebar from '../components/ui/sidebar';
+import * as resizable from '../components/ui/resizable';
+import * as tooltip from '../components/ui/tooltip';
 import * as React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import * as ReactDOM from 'react-dom';
@@ -16,7 +20,7 @@ import { models, registerScopeCleanup } from './models.ts';
 
 export const sharedClientModules = {
   react: React, 'react/jsx-runtime': jsxRuntime, 'react-dom': ReactDOM,
-  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, ...select, ...dropdown, ComposerMenuItem, ContextMenu },
+  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, Input, ...select, ...dropdown, ...sidebar, ...resizable, ...tooltip, ComposerMenuItem, ContextMenu },
 };
 export async function compileClientModule(source: string): Promise<ClientModuleFactory> {
   const url = URL.createObjectURL(new Blob([`export default function(require,module,exports){\n${source}\n}`], { type: 'text/javascript' }));

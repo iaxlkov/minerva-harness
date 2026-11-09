@@ -50,7 +50,7 @@ export function apply(ctx) {
 
 Раздел настроек регистрируется в `settings.pages`. Компонент получает `placement: 'navigation' | 'body'`, `selectedPage`, `onSelectPage`. Для navigation он возвращает кнопку, для body — панель. Используйте уникальный `entryId`, например `plugin:my-package`.
 
-Контроллер создаётся в `apply`, а компоненты подписываются через `useSyncExternalStore`. Закрытие окна или переключение раздела размонтирует компонент, но не уничтожает контроллер. Черновик и последний снимок сохраняются. Фоновый опрос должен останавливаться, когда подписчиков нет; незавершённые запросы не должны записывать состояние после disposal.
+Контроллер создаётся в `apply`, а компоненты подписываются через `useSyncExternalStore`. Уход со страницы настроек или переключение раздела размонтирует компонент, но не уничтожает контроллер. Черновик и последний снимок сохраняются. Фоновый опрос должен останавливаться, когда подписчиков нет; незавершённые запросы не должны записывать состояние после disposal.
 
 ## Жизненный цикл и доверие
 
@@ -68,7 +68,71 @@ Frontend обновляет список через две секунды пос
 
 RPC сериализуются отдельно для каждого процесса. Зависание одного плагина не блокирует вызовы других. Каталоги моделей запрашиваются параллельно и валидируются независимо: ошибочный каталог исключается целиком, остальные остаются доступны. Его диагностическая ошибка очищается после успешного ответа.
 
-## Общие контекстные меню
+## Разделы и компоновка приложения
+
+Оболочка использует shadcn `Sidebar`, `Resizable`, `Sheet`, `Tooltip` текущей темы.
+В `@minerva/ui` доступны эти компоненты и `Input`, а также прежние Button/Select/DropdownMenu.
+
+Workspace-слот `shell.sections` (keyed) создаёт самостоятельный раздел. `entryId`
+должен быть уникальным, например `reports:overview`. Компонент получает
+`{placement, selected, section, onNavigate}` (тип `ShellSectionProps` в SDK):
+
+- `rail`: иконка или DropdownMenu. Используйте `Button` с `aria-label`,
+  `aria-current={selected ? 'page' : undefined}` и `className="rail-button"`.
+- `title`: название раздела, без интерактивных элементов.
+- `sidebar`: содержимое контекстной боковой панели.
+- `body`: основная страница раздела.
+
+```tsx
+ctx.slots.register('shell.sections', {
+  entryId: 'reports:overview', order: 100,
+  component: ({placement, selected, onNavigate}) => {
+    if (placement === 'title') return 'Отчёты';
+    if (placement === 'rail') return <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-lg" className="rail-button"
+          aria-label="Отчёты" aria-current={selected ? 'page' : undefined}>
+          <ReportsIcon/>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right">
+        <DropdownMenuGroup><DropdownMenuItem
+          onSelect={() => onNavigate('reports:overview')}>Открыть отчёты</DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>;
+    if (placement === 'sidebar') return <ReportNavigation/>;
+    return <ReportsPage/>;
+  },
+});
+```
+
+Все дополнительные зоны — list-слоты в workspace scope, с `order` и автоматическим
+удалением регистраций при отключении плагина. Props: `{section, onNavigate}`.
+
+| Слот | Место |
+| --- | --- |
+| `shell.rail.start` / `shell.rail.end` | Начало / низ колонки иконок |
+| `shell.sidebar.header` | Под названием боковой панели |
+| `shell.sidebar.content` | После основной навигации раздела |
+| `shell.sidebar.footer` | Низ боковой панели |
+| `shell.header.actions` | Действия справа в заголовке |
+| `shell.content.before` / `shell.content.after` | До / после основного содержимого |
+
+Встроенные разделы: `chat`, `plugins`, `settings`. Вызов `onNavigate` переключает
+раздел и закрывает мобильную Sheet. При отключении активного plugin-раздела
+открываются чаты. Чат остаётся смонтированным при переходах, его черновик
+и выполняющийся запрос сохраняются. Существующие `navigation.items`,
+`settings.pages`, conversation/composer/message/tool слоты продолжают работать.
+Настройки теперь страница: `settings.pages` по-прежнему получает
+`placement: 'navigation' | 'body'`, `selectedPage` и `onSelectPage`.
+
+Ширина панели ограничена 192–480 px и доступным местом для основной области;
+мышь и клавиатура обслуживаются `Resizable`. Двойной щелчок по разделителю
+возвращает 272 px. Ширина и состояние сворачивания сохраняются локально.
+На экране уже 640 px боковая панель открывается как Sheet с Escape и возвратом фокуса.
+
+## Регистрация контекстных меню
 
 Как в DSH, действия регистрируются отдельно от React-представления через
 `ctx.contextMenus.register({id, target, order, resolve})`. Регистрация принадлежит

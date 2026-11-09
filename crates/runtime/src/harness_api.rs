@@ -17,6 +17,14 @@ struct Session {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LspSession {
+    session_id: String,
+    #[serde(default = "default_lsp_server")]
+    server_id: String,
+}
+fn default_lsp_server() -> String { "rust".into() }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Workspace {
     session_id: String,
     settings: WorkspaceSettings,
@@ -131,7 +139,25 @@ impl Runtime {
                 let a: Id = args(params)?;
                 self.plugins.context().try_service::<crate::workspaces::WorkspaceService>()
                     .map_err(|e| e.to_string())?.remove(&a.id)?;
+                if let Ok(lsp) = self.plugins.context().try_service::<crate::lsp::LspService>() {
+                    lsp.stop_workspace(&a.id).await;
+                }
                 Ok(Value::Null)
+            }
+            "mh-lsp.start" | "mh-lsp.status" | "mh-lsp.stop" => {
+                let a: LspSession = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                if !harness.local { return Err("LSP is unavailable in this profile".into()); }
+                let projects=self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?;
+                let project=projects.list()?.into_iter().find(|p|p.session_ids.contains(&a.session_id)).ok_or("Workspace not found")?;
+                let root=project.path.as_ref().ok_or("Workspace directory is unavailable")?;
+                let service=self.plugins.context().try_service::<crate::lsp::LspService>().map_err(|e|e.to_string())?;
+                match method {
+                    "mh-lsp.start" => service.start(&project.id,std::path::Path::new(root),&a.server_id).await?,
+                    "mh-lsp.stop" => service.stop(&project.id,&a.server_id).await?,
+                    _ => (),
+                }
+                Ok(serde_json::json!({"workspaceId":project.id,"running":service.running(&project.id,&a.server_id).await}))
             }
             "workspace.get" => {
                 let a: Session = args(params)?;

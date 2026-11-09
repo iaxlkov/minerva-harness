@@ -15,6 +15,7 @@ pub mod context;
 pub mod harness;
 mod harness_api;
 pub mod mcp;
+pub mod lsp;
 pub mod session_store;
 pub mod sessions;
 pub mod shell;
@@ -113,6 +114,8 @@ impl Runtime {
                 .await
                 .map_err(|e| RuntimeError::Bootstrap(e.to_string()))?,
             );
+            fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::LspPlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
+            fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::RustLanguagePlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
             fibers.push(
                 ctx.spawn(cordis::PreparedPlugin::from_input(
                     runtime_services::AgentLoopPlugin {

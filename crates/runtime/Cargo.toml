@@ -24,6 +24,7 @@ keyring = { version = "3", features = ["windows-native"] }
 url = "2"
 tempfile = "3"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+tokio-lsp-client = { git = "https://github.com/kviron/minerva-harness-tokio-lsp-client", rev = "5d2e0f94e7b4298a293b5e520cc688a1559c09fa", version = "0.0.1" }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 [target.'cfg(unix)'.dependencies]

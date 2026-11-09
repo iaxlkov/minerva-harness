@@ -63,7 +63,7 @@ test('workspace UI plugin creates grouped durable sessions through the real Host
   await page.getByRole('button',{name:'Сессия',exact:true}).click();
   await expect(page.getByLabel('Политика выполнения')).toBeVisible();
   await expect(page.getByLabel('Рабочая папка',{exact:true})).toHaveCount(0);
-  await page.getByRole('button',{name:'Закрыть настройки'}).click();
+  await page.getByRole('button',{name:'Чаты',exact:true}).click();
   await page.screenshot({path:testInfo.outputPath('workspaces.png')});
   const triggerBounds=await group.getByRole('button',{name:'Меню workspace — my-project'}).boundingBox();
   await group.getByRole('button',{name:'Меню workspace — my-project'}).click();

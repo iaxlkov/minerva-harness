@@ -1,0 +1,306 @@
+html body {
+  min-width: 320px;
+}
+.shell-provider {
+  height: 100vh;
+  min-height: 550px;
+}
+.navigation-shell {
+  position: relative;
+  width: 100%;
+  padding-top: 8px;
+  padding-right: 8px;
+  background: var(--sidebar-rail);
+}
+.oe-studio {
+  --radius-sm: 0.375rem;
+  --sidebar-rail: #201f1d;
+  --sidebar: #242320;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --background: #1c1b1a;
+  --popover: var(--secondary);
+  --popover-foreground: var(--foreground);
+}
+.shell-panels {
+  min-width: 0;
+  flex: 1;
+}
+.shell-panels .main {
+  height: 100%;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0 14px 0 0;
+  overflow: hidden;
+}
+.shell-panels [data-panel] {
+  min-height: 0;
+}
+.shell-panels [data-slot="resizable-panel"] {
+  height: 100%;
+}
+
+.activity-rail {
+  width: 56px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 7px 10px;
+  background: var(--sidebar-rail);
+  overflow-y: auto;
+}
+.rail-logo {
+  border-radius: 8px;
+  margin-bottom: 0;
+  flex: none;
+}
+.activity-rail .rail-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--muted-foreground);
+  border-radius: 10px;
+}
+.activity-rail .rail-button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.activity-rail .rail-button.selected,
+.activity-rail .rail-button[aria-current="page"] {
+  background: var(--secondary);
+  color: var(--primary);
+}
+.rail-button:focus-visible,
+.sidebar-resize:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.rail-bottom {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.navigation-shell .section-sidebar,
+.mobile-sidebar-sheet .section-sidebar {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px 0 0 0;
+  background: var(--sidebar);
+  padding: 0 8px 8px;
+}
+.section-sidebar .brand {
+  padding: 0;
+}
+.section-sidebar .brand .brand-name {
+  font: 600 15px/20px Inter, "Segoe UI", sans-serif;
+  letter-spacing: normal;
+  color: var(--foreground);
+}
+.section-sidebar .sidebar-heading {
+  flex: none;
+  height: 48px;
+  gap: 4px;
+  justify-content: center;
+  padding: 0 8px;
+}
+.section-sidebar .new-chat {
+  width: 100%;
+  flex: none;
+  height: 32px;
+  margin: 4px 0;
+  padding-inline: 8px;
+  gap: 8px;
+}
+.section-sidebar .new-chat svg,
+.section-sidebar .workspace-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+.section-sidebar .workspaces {
+  margin-top: 8px;
+}
+.section-sidebar .workspaces-heading {
+  min-height: 28px;
+  padding: 0;
+}
+.section-sidebar .workspaces-heading > span {
+  padding-left: 8px;
+}
+.section-sidebar .workspace-row {
+  gap: 0;
+}
+.section-sidebar .workspace-toggle {
+  height: 32px;
+  padding-inline: 8px;
+  gap: 8px;
+}
+.section-sidebar .workspaces-heading > button,
+.section-sidebar .workspace-row > button:not(.workspace-toggle) {
+  width: 28px;
+  height: 28px;
+}
+.section-sidebar .workspace-sessions {
+  padding-left: 24px;
+}
+.shell-panels .topbar {
+  height: 48px;
+  padding-inline: 24px;
+}
+.shell-panels .harness-session {
+  padding-inline: 24px;
+}
+.shell-panels .harness-budget {
+  max-width: none;
+  width: 100%;
+  margin-inline: 0;
+}
+.section-sidebar .settings-nav {
+  flex: 1;
+  width: 100%;
+  padding: 0;
+}
+.section-navigation {
+  min-height: 0;
+  flex: 1;
+}
+.section-description {
+  margin: 12px 8px 20px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted-foreground);
+}
+.shell-panels .sidebar-resize {
+  position: relative;
+  width: 1px;
+  flex: 0 0 1px;
+  z-index: 20;
+  background: var(--border);
+  cursor: col-resize;
+  touch-action: none;
+}
+.shell-panels .sidebar-resize::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 12px;
+  transform: translateX(-50%);
+}
+.shell-panels .section-sidebar {
+  border-right: 0;
+}
+.navigation-shell:not(.sidebar-collapsed) .shell-panels .main {
+  border-left: 0;
+}
+.shell-panels .resize-hidden {
+  width: 0;
+  flex-basis: 0;
+  pointer-events: none;
+}
+.shell-panels .resize-hidden::after {
+  display: none;
+}
+.sidebar-resize:hover,
+.sidebar-resize:focus-visible {
+  background: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+.sidebar-collapsed .shell-panels .section-sidebar {
+  visibility: hidden;
+}
+.sidebar-collapsed .shell-panels .main {
+  border-top-left-radius: 14px;
+}
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-screen {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.settings-screen .settings-body {
+  flex: 1;
+  width: 100%;
+  padding: 32px clamp(20px, 4vw, 64px);
+}
+.settings-screen .settings-body > * {
+  max-width: 880px;
+  margin-inline: auto;
+}
+.settings-screen .settings-body > h2 {
+  font-size: 24px;
+  margin-bottom: 10px;
+}
+.settings-screen .settings-body > p {
+  margin-bottom: 28px;
+}
+.settings-screen .settings-body > .provider-add {
+  margin-top: 20px;
+}
+[data-slot="tooltip-content"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+.mobile-sidebar-sheet {
+  width: min(320px, calc(100vw - 40px));
+  padding: 0;
+  border-radius: 0 14px 14px 0;
+  background: var(--sidebar);
+}
+.mobile-sidebar-sheet .section-sidebar {
+  padding-top: 36px;
+  border: 0;
+  border-radius: 0;
+}
+.mobile-sidebar-sheet [data-slot="sheet-close"] {
+  right: 8px;
+  top: 8px;
+}
+@media (max-width: 639px) {
+  .navigation-shell .shell-panels .main {
+    border-left: 1px solid var(--border);
+  }
+  .shell-panels .main {
+    border-top-left-radius: 14px;
+  }
+  .navigation-shell {
+    padding-right: 4px;
+  }
+  .sidebar-resize {
+    display: none;
+  }
+  .navigation-shell .topbar {
+    padding-inline: 16px;
+  }
+  .navigation-shell .viewport {
+    padding-inline: 16px;
+  }
+  .navigation-shell .composer-wrap {
+    width: calc(100% - 24px);
+  }
+  .navigation-shell .harness-session {
+    padding-inline: 12px;
+  }
+  .navigation-shell .plugins-screen {
+    padding: 24px 16px;
+  }
+}

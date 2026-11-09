@@ -82,6 +82,14 @@ pub(super) const SYSTEM: &[SystemPlugin] = &[
         active: published::<WorkspaceTools>,
     },
     SystemPlugin {
+        id: "mh-lsp", name: "MH LSP", description: "Language servers for project workspaces.",
+        local_only: true, active: published::<crate::lsp::LspService>,
+    },
+    SystemPlugin {
+        id: "mh-lsp-rust", name: "MH LSP Rust", description: "Rust language server configuration.",
+        local_only: true, active: published::<crate::lsp::RustLanguageService>,
+    },
+    SystemPlugin {
         id: "mcp",
         name: "Менеджер MCP",
         description: "Подключения MCP, обнаружение и жизненный цикл инструментов серверов.",

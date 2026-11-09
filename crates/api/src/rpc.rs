@@ -190,6 +190,7 @@ pub(crate) async fn dispatch(
         | "workspaces.rename"
         | "workspaces.remove"
         | "workspaces.create"
+        | "mh-lsp.start" | "mh-lsp.status" | "mh-lsp.stop"
         | "workspace.get"
         | "workspace.save"
         | "tools.list"

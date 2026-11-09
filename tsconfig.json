@@ -13,7 +13,13 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowSyntheticDefaultImports": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./apps/web/src/*"
+      ]
+    }
   },
   "include": [
     "apps/web/src",

@@ -28,7 +28,8 @@ test('external React settings reuse module and draft across panel remounts',asyn
   const result=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
     import React from 'react';
     import {createRoot} from 'react-dom/client';
-    import {Settings} from './apps/web/src/pages/settings/Settings';
+    import {NavigationShell} from './apps/web/src/app/NavigationShell';
+ const Settings=()=> <NavigationShell session={{id:'fixture',title:'Fixture',model:null,updatedAt:0}} sessions={[]} onSession={()=>{}} onNew={()=>{}} providers={[]} onProviders={()=>{}} activePlugins={[]}><p>Conversation</p></NavigationShell>;
     import {PluginRoot,createBrowserComposition} from './apps/web/src/app/plugins';
     import {startExternalPlugins} from './apps/web/src/app/externalPlugins';
     import {models} from './apps/web/src/app/models';
@@ -37,10 +38,10 @@ test('external React settings reuse module and draft across panel remounts',asyn
     models.plugins.set([plugin,{...plugin,id:'disabled',name:'Disabled',enabled:false},{...plugin,id:'headless',name:'Headless',hasUi:false}]);
     window.setPluginEnabled=enabled=>models.plugins.set([{...plugin,enabled}]);
     window.calls=[];
-    configureClient(createClient(async(method,params)=>{window.calls.push({method,params});if(method==='plugins.ui')return ${JSON.stringify(source)};if(method==='plugins.call')return 'Saved';throw Error(method);}));
-    createBrowserComposition().then(host=>{const externalPlugins=startExternalPlugins(host);createRoot(document.getElementById('root')).render(<PluginRoot host={host} externalPlugins={externalPlugins}><Settings providers={[]} onChange={()=>{}} activePlugins={['fixture']}/></PluginRoot>);});
+    configureClient(createClient(async(method,params)=>{window.calls.push({method,params});if(method==='workspaces.list')return [];if(method==='plugins.ui')return ${JSON.stringify(source)};if(method==='plugins.call')return 'Saved';throw Error(method);}));
+    createBrowserComposition().then(host=>{const externalPlugins=startExternalPlugins(host);createRoot(document.getElementById('root')).render(<PluginRoot host={host} externalPlugins={externalPlugins}><Settings/></PluginRoot>);});
   `},bundle:true,format:'esm',write:false,loader:{'.css':'empty'}});
-  const css=await readFile('apps/web/src/style.css','utf8');
+  const css=await readFile('apps/web/src/style.css','utf8')+'\n'+await readFile('apps/web/src/app/navigation-shell.css','utf8');
   const csp="default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'";
   await page.route('http://settings.test/**',route=>{
     const script=route.request().url().endsWith('/app.js');
@@ -48,7 +49,7 @@ test('external React settings reuse module and draft across panel remounts',asyn
   });
   await page.goto('http://settings.test/');
   await page.locator('.settings-open').click();
-  const dialog=page.getByRole('dialog');
+  const dialog=page.locator('.navigation-shell');
   await expect(dialog.getByRole('button',{name:'Disabled',exact:true})).toHaveCount(0);
   await expect(dialog.getByRole('button',{name:'Headless',exact:true})).toHaveCount(0);
   await dialog.getByRole('button',{name:'Fixture',exact:true}).click();
@@ -58,8 +59,8 @@ test('external React settings reuse module and draft across panel remounts',asyn
   await dialog.getByRole('button',{name:'Модели',exact:true}).click();
   await dialog.getByRole('button',{name:'Fixture',exact:true}).click();
   await expect(dialog.getByRole('textbox',{name:'Draft'})).toHaveValue('unsaved preference');
-  await dialog.getByRole('button',{name:'Закрыть настройки'}).click();
-  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button',{name:'Чаты',exact:true}).click();
+  await expect(page.locator('.settings-screen')).toHaveCount(0);
   await page.locator('.settings-open').click();
   await expect(dialog.getByRole('textbox',{name:'Draft'})).toHaveValue('unsaved preference');
   expect(await page.evaluate(()=>window.moduleEvaluations)).toBe(1);
