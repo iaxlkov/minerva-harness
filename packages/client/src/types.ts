@@ -16,6 +16,9 @@ export type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnsw
 type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
+ 'mh-lsp.start':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;
+ 'mh-lsp.status':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;
+ 'mh-lsp.stop':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;
  'sessions.rename':Endpoint<{id:string;title:string},null>;
  'sessions.state':Endpoint<{id:string;pinned:boolean;archived:boolean},null>;
  'sessions.fork':Endpoint<{source:string;id:string},SessionInfo>;
