@@ -104,7 +104,7 @@ export function NavigationShell({
   }, [collapsed, isMobile]);
   const sections = [
     ...host.slots.entries("shell.sections", workspaceScope),
-  ].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  ].filter(entry => entry.entryId !== 'mh-editor' || activePlugins.includes('mh-editor')).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   useEffect(() => {
     if (
       !["chat", "plugins", "settings"].includes(section) &&
@@ -136,6 +136,7 @@ export function NavigationShell({
       entryId={entryId}
       componentProps={{
         ...slotProps,
+        sessionId: session.id,
         placement,
         selected: entryId === section,
       }}
@@ -364,8 +365,8 @@ export function NavigationShell({
               onDoubleClick={() => panel.current?.resize(272)}
             />
             <ResizablePanel id="shell-main-panel" minSize={isMobile ? 0 : 360}>
-              <main className="main">
-                <header className="topbar">
+              <main className={`main ${section === 'mh-editor' ? 'development-mode' : ''}`}>
+                {section !== 'mh-editor' && <header className="topbar">
                   <div className="breadcrumbs">
                     <span>
                       {section === "chat"
@@ -374,7 +375,7 @@ export function NavigationShell({
                           ? "Настройки"
                           : section === "plugins"
                             ? "Плагины"
-                            : "Расширения"}
+                            : section === "mh-editor" ? "Проект" : "Расширения"}
                     </span>
                     <span className="crumb-separator">/</span>
                     <strong>
@@ -398,13 +399,13 @@ export function NavigationShell({
                       componentProps={slotProps}
                     />
                   </div>
-                </header>
+                </header>}
                 <UiSlot
                   slot="shell.content.before"
                   scope={workspaceScope}
                   componentProps={slotProps}
                 />
-                <div className="chat-view" hidden={section !== "chat"}>
+                <div className="chat-view" hidden={section !== "chat" && section !== "mh-editor"}>
                   {children}
                 </div>
                 {section === "plugins" && <Plugins />}

@@ -24,6 +24,14 @@ struct LspSession {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EditorFile {
+    session_id: String,
+    #[serde(default)] path: String,
+    #[serde(default)] text: Option<String>,
+    #[serde(default)] version: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LspDocument {
     session_id: String,
     path: String,
@@ -154,6 +162,20 @@ impl Runtime {
                     lsp.stop_workspace(&a.id).await;
                 }
                 Ok(Value::Null)
+            }
+            "mh-editor.list" | "mh-editor.read" | "mh-editor.save" => {
+                let a: EditorFile = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                if !harness.local { return Err("Editor is unavailable in this profile".into()); }
+                let projects=self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?;
+                let project=projects.list()?.into_iter().find(|p|p.session_ids.contains(&a.session_id)).ok_or("Workspace not found")?;
+                let root=std::path::Path::new(project.path.as_ref().ok_or("Workspace directory is unavailable")?);
+                let editor=self.plugins.context().try_service::<crate::editor::EditorService>().map_err(|e|e.to_string())?;
+                match method {
+                    "mh-editor.list" => encoded(editor.list(root,&a.path)?),
+                    "mh-editor.read" => editor.read(root,&a.path),
+                    _ => editor.save(root,&a.path,a.version.as_deref().ok_or("Missing file version")?,a.text.as_deref().ok_or("Missing file text")?),
+                }
             }
             "mh-lsp.start" | "mh-lsp.status" | "mh-lsp.stop" => {
                 let a: LspSession = args(params)?;

@@ -304,3 +304,10 @@ html body {
     padding: 24px 16px;
   }
 }
+
+.shell-panels .main.development-mode { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,34%); grid-template-rows:minmax(0,1fr); }
+.development-mode .chat-view {grid-column:2;grid-row:1;border-left:1px solid var(--border);overflow:hidden;}
+.development-mode .editor-workbench {grid-column:1;grid-row:1;min-width:0;min-height:0;display:flex;flex-direction:column;}
+.development-mode .viewport {padding:18px;}
+.development-mode .composer-wrap {width:calc(100% - 32px);}
+@media(max-width:900px){.shell-panels .main.development-mode {grid-template-columns:minmax(0,1fr);} .development-mode .chat-view {display:none;} }

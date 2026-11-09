@@ -81,6 +81,7 @@ pub(super) const SYSTEM: &[SystemPlugin] = &[
         local_only: true,
         active: published::<WorkspaceTools>,
     },
+    SystemPlugin { id: "mh-editor", name: "MH Editor", description: "Workspace code editor.", local_only: true, active: published::<crate::editor::EditorService> },
     SystemPlugin {
         id: "mh-lsp", name: "MH LSP", description: "Language servers for project workspaces.",
         local_only: true, active: published::<crate::lsp::LspService>,

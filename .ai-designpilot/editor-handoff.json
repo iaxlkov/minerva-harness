@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-09T14:15:34.210Z",
+  "status": "INCOMPLETE",
+  "mode": "UNKNOWN",
+  "phase": "baseline",
+  "iteration": {
+    "current": 0,
+    "maximum": 4,
+    "accepted": null
+  },
+  "verification": [
+    {
+      "name": "browser",
+      "status": "NOT VERIFIED",
+      "evidence": null,
+      "verifiedAt": null
+    },
+    {
+      "name": "responsive",
+      "status": "NOT VERIFIED",
+      "evidence": null,
+      "verifiedAt": null
+    },
+    {
+      "name": "layoutAudit",
+      "status": "NOT VERIFIED",
+      "evidence": null,
+      "verifiedAt": null
+    },
+    {
+      "name": "build",
+      "status": "NOT VERIFIED",
+      "evidence": null,
+      "verifiedAt": null
+    },
+    {
+      "name": "tests",
+      "status": "NOT VERIFIED",
+      "evidence": null,
+      "verifiedAt": null
+    }
+  ],
+  "audits": [
+    {
+      "kind": "design-plan-audit",
+      "path": ".ai-designpilot\\evidence\\design-plan-audit.json",
+      "passed": true
+    }
+  ],
+  "remainingIssues": [],
+  "specialists": [],
+  "knownLimitations": []
+}

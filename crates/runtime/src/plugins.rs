@@ -949,7 +949,7 @@ mod tests {
                 // This harness-only fixture does not compose session execution.
                 assert_eq!(
                     entry.enabled,
-                    !["sessions", "agent-loop", "workspaces", "mh-lsp", "mh-lsp-rust"].contains(&entry.id.as_str())
+                    !["sessions", "agent-loop", "workspaces", "mh-editor", "mh-lsp", "mh-lsp-rust"].contains(&entry.id.as_str())
                 );
                 assert!(manager.set_enabled(&entry.id, false).await.is_err());
             }

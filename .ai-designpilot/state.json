@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "mode": "UNKNOWN",
+  "phase": "baseline",
+  "iteration": 0,
+  "maxModifyingIterations": 4,
+  "acceptedIteration": null,
+  "verification": {
+    "browser": "NOT VERIFIED",
+    "responsive": "NOT VERIFIED",
+    "layoutAudit": "NOT VERIFIED",
+    "build": "NOT VERIFIED",
+    "tests": "NOT VERIFIED"
+  }
+}

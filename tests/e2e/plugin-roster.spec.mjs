@@ -1,9 +1,10 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 
 test('polled crash removes external settings and exposes retry and disable actions',async({page})=>{
  const source=`exports.sdkVersion=2;exports.apply=ctx=>{const React=require('react');ctx.effect(()=>{window.disposed=true;});ctx.slots.register('settings.pages',{entryId:'plugin:fixture',component:props=>props.placement==='navigation'?React.createElement('button',{onClick:()=>props.onSelectPage('plugin:fixture')},'Fixture'):React.createElement('p',null,'Fixture body')});};`;
- const result=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+ const result=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
   import React from 'react';
   import {createRoot} from 'react-dom/client';
   import {Plugins} from './apps/web/src/pages/plugins/Plugins';

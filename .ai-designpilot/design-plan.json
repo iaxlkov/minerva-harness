@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "subject": {
+    "product": "Minerva Harness development workspace",
+    "audience": "Разработчики, работающие с AI-ассистентом",
+    "primaryJob": "Читать и редактировать файлы активного проекта рядом с диалогом",
+    "domainCues": [
+      "дерево проекта",
+      "вкладки файлов и диагностика"
+    ]
+  },
+  "direction": {
+    "concept": "Компактное рабочее пространство Cursor внутри существующей оболочки Minerva",
+    "memorableElement": "Большая область кода рядом с живым диалогом",
+    "quietSupportingSystem": "Существующие shadcn и спокойные разделители Minerva",
+    "palette": [
+      {
+        "name": "background",
+        "hex": "#1c1b1a",
+        "role": "редактор"
+      },
+      {
+        "name": "sidebar",
+        "hex": "#242320",
+        "role": "дерево"
+      },
+      {
+        "name": "rail",
+        "hex": "#201f1d",
+        "role": "навигация"
+      },
+      {
+        "name": "text",
+        "hex": "#e8e5e1",
+        "role": "текст"
+      },
+      {
+        "name": "accent",
+        "hex": "#c68d6b",
+        "role": "активное состояние"
+      }
+    ],
+    "typography": [
+      {
+        "family": "system sans",
+        "role": "панели",
+        "treatment": "компактный средний размер"
+      },
+      {
+        "family": "monospace",
+        "role": "код",
+        "treatment": "ровная плотная сетка"
+      }
+    ],
+    "layout": {
+      "concept": "дерево слева, код по центру, диалог справа",
+      "alignment": "left",
+      "wireframe": "[rail][files | tabs + code | chat]"
+    },
+    "principles": [
+      "сохранять текущий диалог и несохраненные файлы",
+      "файлы и ошибки доступны без модальных окон"
+    ],
+    "motion": {
+      "strategy": "без декоративной анимации",
+      "reducedMotion": "переходы отсутствуют"
+    }
+  },
+  "antiTemplateReview": {
+    "checkedDefaults": [
+      "cream-terracotta",
+      "dark-acid",
+      "broadsheet",
+      "saas-card-kit",
+      "template-chrome"
+    ],
+    "acceptedDefaults": [],
+    "uniquenessRationale": "Применяет существующую визуальную систему Minerva и компоновку рабочего пространства пользователя.",
+    "reviewOutcome": "Сохранены реальные токены и плотность, убраны декоративные элементы.",
+    "revisions": []
+  },
+  "content": {
+    "voice": "Короткие понятные русские подписи",
+    "userVocabulary": [
+      "проект",
+      "файл",
+      "диалог"
+    ],
+    "actionVocabulary": [
+      "Открыть",
+      "Сохранить"
+    ],
+    "errorGuidance": "Показать ошибку рядом с действием и сохранить буфер",
+    "emptyStateGuidance": "Предложить выбрать файл в дереве"
+  }
+}

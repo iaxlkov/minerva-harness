@@ -9,6 +9,8 @@ export const slotDeclarations = {
   'shell.header.actions': { kind: 'list', scope: 'workspace' },
   'shell.content.before': { kind: 'list', scope: 'workspace' },
   'shell.content.after': { kind: 'list', scope: 'workspace' },
+  'editor.tabs.start': { kind: 'list', scope: 'workspace' },
+  'editor.tabs.end': { kind: 'list', scope: 'workspace' },
   'navigation.items': { kind: 'list', scope: 'workspace' },
   'settings.pages': { kind: 'keyed', scope: 'workspace' },
   'conversation.views': { kind: 'keyed', scope: 'session' },
@@ -29,4 +31,5 @@ export type SlotSelection = Partial<Record<SlotName, string | Record<string, str
 
 /** Props supplied by Minerva to workspace-scoped shell contributions. */
 export interface ShellNavigationProps {section:string;onNavigate:(section:string)=>void}
-export interface ShellSectionProps extends ShellNavigationProps {placement:'rail'|'sidebar'|'body'|'title';selected:boolean}
+export interface ShellSectionProps extends ShellNavigationProps {sessionId:string;placement:'rail'|'sidebar'|'body'|'title';selected:boolean}
+export interface EditorTabsSlotProps {sessionId:string;activePath:string|null}

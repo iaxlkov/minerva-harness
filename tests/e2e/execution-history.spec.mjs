@@ -1,3 +1,4 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 import {readFile} from 'node:fs/promises';
@@ -9,7 +10,7 @@ const reasoning={kind:'reasoning',data:{text:'Inspect the workspace before chang
 const saved=(parts,status='running')=>({id:'assistant',parentId:null,role:'assistant',createdAt:'2026-11-07T00:00:00Z',parts,extensions:{execution:{status}}});
 
 test('actual message parts retain live tool states, reasoning, cards and images through reload',async({page})=>{
-  const bundle=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+  const bundle=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
     import React from 'react';
     import {createRoot} from 'react-dom/client';
     import {AssistantRuntimeProvider,useLocalRuntime,ThreadPrimitive,MessagePrimitive,AuiIf} from '@assistant-ui/react';

@@ -1,3 +1,4 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 import postcss from 'postcss';
@@ -5,7 +6,7 @@ import tailwind from 'tailwindcss';
 import {readFile} from 'node:fs/promises';
 
 export async function mount(page) {
- const bundle=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+ const bundle=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
   import React from 'react';import {createRoot} from 'react-dom/client';
   import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem} from './apps/web/src/components/ui/dropdown-menu';
   import {Button} from './apps/web/src/components/ui/button';

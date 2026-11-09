@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "mode": "REFINE",
+  "maxIterations": 4,
+  "plateauLimit": 2,
+  "minImprovement": 0,
+  "timeoutMs": 120000,
+  "strictCompletionGate": true,
+  "target": {
+    "url": "http://localhost:3000",
+    "route": "/",
+    "selector": "body"
+  },
+  "viewports": [
+    { "width": 1440, "height": 900 },
+    { "width": 768, "height": 1024 },
+    { "width": 390, "height": 844 }
+  ],
+  "baseline": [],
+  "iteration": [],
+  "specialists": {
+    "available": []
+  }
+}

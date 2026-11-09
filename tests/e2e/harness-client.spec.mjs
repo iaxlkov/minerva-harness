@@ -1,9 +1,10 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 
 async function mount(page,contents,request){
  await page.exposeFunction('request',request);
- const bundle=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {configureClient} from './apps/web/src/client';configureClient({call:(method,params)=>window.request(method,params)});${contents}`},bundle:true,write:false,format:'esm',loader:{'.css':'empty'}});
+ const bundle=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {configureClient} from './apps/web/src/client';configureClient({call:(method,params)=>window.request(method,params)});${contents}`},bundle:true,write:false,format:'esm',loader:{'.css':'empty'}});
  await page.route('http://harness.test/**',route=>route.fulfill({contentType:route.request().url().endsWith('app.js')?'text/javascript':'text/html',body:route.request().url().endsWith('app.js')?bundle.outputFiles[0].text:'<div id="root"></div><script type="module" src="/app.js"></script>'}));
  await page.goto('http://harness.test/');
 }

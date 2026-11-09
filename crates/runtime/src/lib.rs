@@ -3,6 +3,7 @@ pub mod conversation;
 pub mod credential_store;
 pub mod engine;
 pub mod events;
+pub mod editor;
 pub mod network_policy;
 pub mod plugins;
 pub mod providers;
@@ -114,6 +115,7 @@ impl Runtime {
                 .await
                 .map_err(|e| RuntimeError::Bootstrap(e.to_string()))?,
             );
+            fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(editor::EditorPlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
             fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::LspPlugin(plugins.harness.local), ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
             fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::RustLanguagePlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
             plugins.sync_lsp().await.map_err(RuntimeError::Bootstrap)?;

@@ -1,8 +1,9 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 
 test('master switch pauses selection, preserves diagnostics and reports failures',async({page})=>{
- const result=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+ const result=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
   import React from 'react';
   import {createRoot} from 'react-dom/client';
   import {Plugins} from './apps/web/src/pages/plugins/Plugins';

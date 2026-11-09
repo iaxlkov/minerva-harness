@@ -1,3 +1,4 @@
+import {viteWorkerStub} from './vite-worker-stub.mjs';
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
 import {readFile} from 'node:fs/promises';
@@ -25,7 +26,7 @@ test('external React settings reuse module and draft across panel remounts',asyn
         :React.createElement(Body)});
     };
   `;
-  const result=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+  const result=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
     import React from 'react';
     import {createRoot} from 'react-dom/client';
     import {NavigationShell} from './apps/web/src/app/NavigationShell';

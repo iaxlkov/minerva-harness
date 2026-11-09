@@ -1,5 +1,6 @@
-import type {ShellNavigationProps,ShellSectionProps} from '../../../../packages/plugin-sdk/src/slots.types';
+import type {EditorTabsSlotProps,ShellNavigationProps,ShellSectionProps} from '../../../../packages/plugin-sdk/src/slots.types';
 import {workspacePlugin} from '../plugins/workspaces';
+import {editorPlugin} from '../plugins/editor';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
 import {BrowserPluginHost, type Scope, type SlotName, type SlotSelection, type BrowserPluginContext} from '../../../../packages/plugin-sdk/src/index.ts';
@@ -32,6 +33,8 @@ export interface AppSlotProps {
  'shell.header.actions':ShellSlotProps;
  'shell.content.before':ShellSlotProps;
  'shell.content.after':ShellSlotProps;
+ 'editor.tabs.start':EditorTabsSlotProps;
+ 'editor.tabs.end':EditorTabsSlotProps;
  'root.layout':{children:ReactNode};
  'navigation.items':{session:SessionInfo;sessions:SessionInfo[];disabled?:boolean;onNew:(workspaceId?:string)=>void;onSession:(session:SessionInfo)=>void};
  'settings.pages':SettingsPageProps;
@@ -50,7 +53,7 @@ export function registerUiSlot<K extends SlotName>(ctx:BrowserPluginContext,slot
 export async function createBrowserComposition(selection:SlotSelection={}){
  const host=new BrowserPluginHost(selection);
  await host.activate([{id:'minerva-ui',apply(ctx){ctx.slots.register('root.layout',{entryId:'default',component:({children}:{children:ReactNode})=><>{children}</>});}}]);
- await host.activate([workspacePlugin(workspaceScope)]);
+ await host.activate([workspacePlugin(workspaceScope),editorPlugin(workspaceScope)]);
  return host;
 }
 export function UiSlot<K extends SlotName>({slot,scope,entryId,componentProps,fallback}: {slot:K;scope:Scope;entryId?:string;componentProps?:AppSlotProps[K];fallback?:ReactNode}){

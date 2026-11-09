@@ -6,7 +6,7 @@ use std::{
 };
 const LIMIT: usize = 64 * 1024;
 // Serialize read-modify-write edits so concurrent tool calls cannot lose updates.
-static EDIT_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static EDIT_LOCK: Mutex<()> = Mutex::new(());
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -49,7 +49,7 @@ fn contained(
     }
     Ok((dir, relative.to_path_buf()))
 }
-fn atomic_write(dir: &cap_std::fs::Dir, path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn atomic_write(dir: &cap_std::fs::Dir, path: &Path, content: &str) -> Result<(), String> {
     // Hold the parent capability across temp creation and rename, including when
     // another process renames a directory while this edit is running.
     let parent = dir

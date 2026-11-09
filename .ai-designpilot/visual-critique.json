@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "evidence": [],
+  "lenses": {
+    "briefAlignment": { "status": "NOT_VERIFIED", "observation": "" },
+    "subjectGrounding": { "status": "NOT_VERIFIED", "observation": "" },
+    "memorableIdeaAndRestraint": { "status": "NOT_VERIFIED", "observation": "" },
+    "typography": { "status": "NOT_VERIFIED", "observation": "" },
+    "templateDefaults": { "status": "NOT_VERIFIED", "observation": "" },
+    "motion": { "status": "NOT_VERIFIED", "observation": "" },
+    "interfaceWriting": { "status": "NOT_VERIFIED", "observation": "" },
+    "responsiveAccessibility": { "status": "NOT_VERIFIED", "observation": "" }
+  },
+  "acceptedDefaults": [],
+  "removedOrJustifiedFlourish": "",
+  "summary": ""
+}

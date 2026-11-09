@@ -119,6 +119,11 @@ ctx.slots.register('shell.sections', {
 | `shell.header.actions` | Действия справа в заголовке |
 | `shell.content.before` / `shell.content.after` | До / после основного содержимого |
 
+В режиме разработки list-слоты `editor.tabs.start` и `editor.tabs.end`
+размещают компоненты соответственно до и после вкладок редактора. Они доступны
+в workspace scope и получают `{sessionId, activePath}`, где `activePath` равен
+`null`, если файл не выбран. Регистрации удаляются при отключении плагина.
+
 Встроенные разделы: `chat`, `plugins`, `settings`. Вызов `onNavigate` переключает
 раздел и закрывает мобильную Sheet. При отключении активного plugin-раздела
 открываются чаты. Чат остаётся смонтированным при переходах, его черновик

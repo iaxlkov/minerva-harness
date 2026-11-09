@@ -20,6 +20,7 @@ pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "context",
     "workspace-tools",
     "workspaces",
+    "mh-editor",
     "mh-lsp",
     "mh-lsp-rust",
     "mcp",

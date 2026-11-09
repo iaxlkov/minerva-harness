@@ -3,7 +3,7 @@
 //! approval/questions use per-call oneshots rather than Cordis waterfalls.
 pub(crate) mod files;
 mod interaction;
-mod native;
+pub(crate) mod native;
 mod process_tree;
 pub use interaction::InteractionBroker;
 pub use minerva_plugin_sdk::tools::*;

@@ -1,0 +1,9 @@
+.editor-tree {min-height:0;flex:1;} .editor-tree-title {padding:12px 9px 8px;color:var(--muted-foreground);font-size:11px;font-weight:600;letter-spacing:.04em;}
+.editor-file {display:flex;width:100%;height:30px;align-items:center;gap:6px;border:0;background:transparent;color:var(--sidebar-foreground);font-size:12px;text-align:left;cursor:pointer;}
+.editor-file:hover {background:var(--accent);} .editor-file span:last-child {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} .editor-file .expanded {transform:rotate(90deg);} .editor-file-spacer {width:13px;flex:none;}
+.editor-hint {padding:8px;color:var(--muted-foreground);font-size:12px;} .editor-tabs {height:38px;flex:none;display:flex;align-items:center;overflow-x:auto;border-bottom:1px solid var(--border);}
+.editor-tabs-list {display:flex;align-items:center;height:100%;min-width:0;} .editor-tabs-end {display:flex;align-items:center;margin-left:auto;}
+.editor-tab {display:flex;align-items:center;height:100%;max-width:210px;border-right:1px solid var(--border);color:var(--muted-foreground);} .editor-tab.active {color:var(--foreground);border-bottom:2px solid var(--primary);}
+.editor-tab button {border:0;background:transparent;color:inherit;font-size:12px;cursor:pointer;} .editor-tab [role=tab] {padding:0 8px 0 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} .editor-close {padding:4px 7px;}
+.editor-canvas {min-height:0;flex:1;} .editor-canvas[hidden] {display:none;} .editor-empty {display:flex;min-height:0;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--muted-foreground);font-size:13px;} .editor-empty-glyph {font:500 25px monospace;opacity:.6;}
+.editor-error {padding:8px 12px;color:var(--destructive);font-size:12px;overflow-wrap:anywhere;}
