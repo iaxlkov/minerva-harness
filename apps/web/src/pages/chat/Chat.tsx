@@ -1,3 +1,4 @@
+import {NavigationShell} from '../../app/NavigationShell';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {AttachmentPicker} from '../../harness/AttachmentPicker';
 import {SessionControls} from '../../harness/SessionControls';
@@ -11,12 +12,10 @@ import {
   AssistantRuntimeProvider, useLocalRuntime, ThreadPrimitive, AuiIf,
   MessagePrimitive, ComposerPrimitive, type ChatModelAdapter,
 } from '@assistant-ui/react';
-import { ArrowUp, Plus, Puzzle } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Select, SelectGroup, SelectLabel, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
 import '../../style.css';
-import { Plugins } from '../../Plugins';
-import { Settings } from '../../Settings';
 import type { Provider, SessionInfo, PluginModel } from '../../../../../packages/client/src/types.ts';
 import { sessionHistory,decodeSessionMessage } from '../../sessionHistory';
 import {useRemoteSession} from '../../app/useRemoteSession';
@@ -78,7 +77,7 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
 
 import {models} from "../../app/models";
 
-export function Chat({ model, configured, providers, pluginModels, onSelect, onProviders, activePlugins, onNew, session, sessions, onSession, onSaved, onError }: { model: string; configured: boolean; providers:Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void; onProviders:(p:Provider[])=>void; activePlugins:string[]; onNew:(workspaceId?:string)=>void; session:SessionInfo; sessions:SessionInfo[]; onSession:(session:SessionInfo)=>void; onSaved:()=>void; onError:(message:string)=>void }) {
+function SessionChat({ model, configured, providers, pluginModels, onSelect, onProviders, activePlugins, onNew, session, sessions, onSession, onSaved, onError }: { model: string; configured: boolean; providers:Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void; onProviders:(p:Provider[])=>void; activePlugins:string[]; onNew:(workspaceId?:string)=>void; session:SessionInfo; sessions:SessionInfo[]; onSession:(session:SessionInfo)=>void; onSaved:()=>void; onError:(message:string)=>void }) {
   const [running,setRunningState]=useState(false);
   const attached=useRef(true);
   // Mark the observer detached before assistant-ui's passive cleanup aborts its adapter.
@@ -103,18 +102,13 @@ export function Chat({ model, configured, providers, pluginModels, onSelect, onP
     }
   },[remote,runtime,running]);
   const cancelRemote=()=>{if(remote.activeRun)void invoke('runs.cancel',{sessionId:session.id,runId:remote.activeRun.runId}).catch(error=>onError(`Не удалось отменить задачу: ${String(error)}`));};
-  const [view, setView] = useState<'chat' | 'plugins'>('chat');
-  return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}><div className="oe-studio app-shell">
-    <ScrollArea asChild><aside className="sidebar">
-      <div className="brand" aria-label="Minerva Harness"><div className="brand-mark"><img src="/minerva-64.png" width={36} height={36} alt=""/></div><div className="brand-wordmark"><strong className="brand-name">Minerva</strong><span className="brand-descriptor">HARNESS</span></div></div>
-      <div className="sidebar-section"><Button variant="outline" className="new-chat" onClick={() => { setView('chat'); onNew(); }}><Plus data-icon="inline-start"/> Новая сессия</Button></div>
-      <Button variant="ghost" className={`nav-item ${view === "plugins" ? "selected" : ""}`} onClick={() => setView("plugins")}><Puzzle size={15}/><span>Плагины</span></Button>
-      <UiSlot slot="navigation.items" scope={workspaceScope} componentProps={{session,sessions,disabled:false,onNew:(workspaceId)=>{setView('chat');onNew(workspaceId);},onSession:(item)=>{setView('chat');onSession(item);}}}/><div className="sidebar-bottom"><Settings sessionId={session.id} providers={providers} onChange={onProviders} activePlugins={activePlugins}/></div>
-    </aside></ScrollArea>
-    <main className="main"><header className="topbar"><div className="breadcrumbs"><span>Чат</span><span className="crumb-separator">/</span><strong>{view === "chat" ? session.title : "Плагины"}</strong></div><div className="top-status"><span className="status-dot"/> Rig · локально</div></header>
-      <div className="chat-view" hidden={view !== "chat"}><SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun} onRemoteCancel={cancelRemote}/>}/></div>
-      <UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
-      {view === "plugins" && <Plugins/>}
-    </main>
-  </div></AssistantRuntimeProvider></SessionScopeContext.Provider></SessionIdContext.Provider>;
+  return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}>
+
+    <SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun} onRemoteCancel={cancelRemote}/>}/><UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
+
+  </AssistantRuntimeProvider></SessionScopeContext.Provider></SessionIdContext.Provider>;
+}
+
+export function Chat(props:React.ComponentProps<typeof SessionChat>){
+ return <NavigationShell session={props.session} sessions={props.sessions} onSession={props.onSession} onNew={props.onNew} providers={props.providers} onProviders={props.onProviders} activePlugins={props.activePlugins}><SessionChat key={props.session.id} {...props}/></NavigationShell>;
 }

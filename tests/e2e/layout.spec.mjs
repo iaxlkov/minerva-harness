@@ -4,9 +4,12 @@ import postcss from 'postcss';
 import tailwind from 'tailwindcss';
 import {readFile} from 'node:fs/promises';
 
-async function mount(page) {
+export async function mount(page) {
  const bundle=await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
   import React from 'react';import {createRoot} from 'react-dom/client';
+  import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem} from './apps/web/src/components/ui/dropdown-menu';
+  import {Button} from './apps/web/src/components/ui/button';
+  import {Input} from './apps/web/src/components/ui/input';
   import {Chat} from './apps/web/src/pages/chat/Chat';
   import {configureClient} from './apps/web/src/client';
   import {PluginRoot,createBrowserComposition} from './apps/web/src/app/plugins';
@@ -19,9 +22,13 @@ async function mount(page) {
    return [];
   }});
   const session={id:'layout',title:'Новый диалог',model:null,updatedAt:0};
-  createBrowserComposition().then(host=>createRoot(document.getElementById('root')).render(<PluginRoot host={host}><Chat session={session} sessions={Array.from({length:40},(_,index)=>({...session,id:String(index),title:"Session "+index}))} providers={[]} pluginModels={[]} model="" configured={false} activePlugins={[]} onSelect={()=>{}} onProviders={()=>{}} onNew={()=>{}} onSession={()=>{}} onSaved={()=>{}} onError={()=>{}}/></PluginRoot>));
+  createBrowserComposition().then(host=>{window.disableSection=()=>host.disable('shell-fixture');window.enableSection=()=>host.activate([{id:'shell-fixture',apply(ctx){
+   const scoped=ctx.scope({kind:'workspace',workspaceId:'default'});
+   scoped.slots.register('shell.sections',{entryId:'fixture:reports',component:props=>props.placement==='title'?'Отчёты':props.placement==='rail'?<DropdownMenu><DropdownMenuTrigger className={'rail-button '+(props.selected?'selected':'')} aria-label="Отчёты">▦</DropdownMenuTrigger><DropdownMenuContent side="right"><DropdownMenuItem onSelect={()=>props.onNavigate('fixture:reports')}>Открыть отчёты</DropdownMenuItem></DropdownMenuContent></DropdownMenu>:props.placement==='sidebar'?<Button variant="ghost" className="nav-item">Мои отчёты</Button>:<section style={{padding:32}}><h1>Отчёты проекта</h1><Input aria-label="Фильтр отчётов"/></section>});
+   for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.content.before','shell.content.after'])scoped.slots.register(name,{entryId:'marker',component:()=> <span data-testid={name}>·</span>});
+  }}]);createRoot(document.getElementById('root')).render(<PluginRoot host={host}><Chat session={session} sessions={Array.from({length:40},(_,index)=>({...session,id:String(index),title:"Session "+index}))} providers={[]} pluginModels={[]} model="" configured={false} activePlugins={[]} onSelect={()=>{}} onProviders={()=>{}} onNew={()=>{}} onSession={()=>{}} onSaved={()=>{}} onError={()=>{}}/></PluginRoot>);});
  `},bundle:true,format:'esm',write:false,loader:{'.css':'empty'}});
- const css=(await postcss([tailwind]).process(await readFile('apps/web/src/style.css','utf8'),{from:'apps/web/src/style.css'})).css+'\n'+await readFile('apps/web/src/harness/harness.css','utf8');
+ const css=(await postcss([tailwind]).process(await readFile('apps/web/src/style.css','utf8'),{from:'apps/web/src/style.css'})).css+'\n'+await readFile('apps/web/src/harness/harness.css','utf8')+'\n'+await readFile('apps/web/src/app/navigation-shell.css','utf8');
  await page.route('http://layout.test/**',async route=>{
   const url=new URL(route.request().url());
   if(url.pathname==='/minerva-welcome.png'||url.pathname==='/minerva-64.png')return route.fulfill({contentType:'image/png',body:await readFile('apps/web/public'+url.pathname)});
@@ -77,7 +84,7 @@ for(const [width,height] of [[1280,800],[900,800],[700,800],[900,550]])test(`scr
  await expect(page.getByLabel('ID сервера')).toBeVisible();
  await checkOverflow('.settings-body');
  await page.screenshot({path:testInfo.outputPath('mcp.png')});
- await page.getByRole('button',{name:'Закрыть настройки'}).click();
+ await page.getByRole('button',{name:'Чаты',exact:true}).click();
  await page.getByRole('button',{name:'Плагины',exact:true}).click();
  await expect(page.getByRole('button',{name:'Настроить',exact:true})).toBeVisible();
  await checkOverflow('.plugins-screen');
@@ -87,4 +94,51 @@ for(const [width,height] of [[1280,800],[900,800],[700,800],[900,550]])test(`scr
  await checkOverflow('.shell-screen');
  await page.screenshot({path:testInfo.outputPath('shell.png')});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+});
+
+
+test('shell keeps draft, resizes, persists preferences and removes plugin sections',async({page},testInfo)=>{
+ await page.setViewportSize({width:1280,height:800});await mount(page);
+ const input=page.getByRole('textbox',{name:'Сообщение ассистенту'});
+ await input.fill('Черновик для проверки переходов');
+ const sidebar=page.locator('#section-sidebar'),resize=page.getByRole('separator',{name:'Ширина боковой панели'});
+ const initial=(await sidebar.boundingBox()).width,handle=await resize.boundingBox();
+ expect(handle.width).toBe(1);
+ await page.mouse.move(handle.x-4,200);await page.mouse.down();await page.mouse.move(handle.x+96,200,{steps:40});
+ expect((await sidebar.boundingBox()).width).toBeCloseTo(initial+100,0);
+ await page.mouse.up();
+ expect((await sidebar.boundingBox()).width).toBeCloseTo(initial+100,0);
+ const expandedHandle=await resize.boundingBox();
+ await page.mouse.move(expandedHandle.x+4,200);await page.mouse.down();await page.mouse.move(expandedHandle.x-56,200,{steps:40});
+ expect((await sidebar.boundingBox()).width).toBeCloseTo(initial+40,0);
+ await page.mouse.up();
+ expect((await sidebar.boundingBox()).width).toBeCloseTo(initial+40,0);
+ await resize.focus();await page.keyboard.press('ArrowLeft');const savedWidth=(await sidebar.boundingBox()).width;expect(savedWidth).toBeLessThan(initial+100);
+ await page.getByRole('button',{name:'Свернуть боковую панель'}).click();await expect(sidebar).toBeHidden();
+ await page.getByRole('button',{name:'Плагины',exact:true}).click();await expect(page.locator('.plugins-screen')).toBeVisible();
+ await page.getByRole('button',{name:'Развернуть боковую панель'}).click();
+ await expect(page.locator('.workspace-list')).toHaveCount(0);await expect(sidebar.getByText('Все плагины')).toBeVisible();
+ await page.getByRole('button',{name:'Настройки',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(sidebar.getByRole('button',{name:'Модели',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Чаты',exact:true}).click();await expect(input).toHaveValue('Черновик для проверки переходов');
+ await page.evaluate(()=>window.enableSection());await page.getByRole('button',{name:'Отчёты',exact:true}).click();await page.getByRole('menuitem',{name:'Открыть отчёты'}).click();
+ await expect(sidebar.getByRole('button',{name:'Мои отчёты'})).toBeVisible();await expect(page.getByRole('heading',{name:'Отчёты проекта'})).toBeVisible();
+ for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.content.before','shell.content.after'])await expect(page.getByTestId(name)).toBeVisible();
+ await page.screenshot({path:testInfo.outputPath('plugin-section.png')});
+ await page.evaluate(()=>window.disableSection());await expect(page.getByRole('button',{name:'Отчёты',exact:true})).toHaveCount(0);await expect(input).toHaveValue('Черновик для проверки переходов');
+ await page.getByRole('button',{name:'Свернуть боковую панель'}).click();await page.reload();await expect(sidebar).toBeHidden();
+ await page.getByRole('button',{name:'Развернуть боковую панель'}).click();expect((await sidebar.boundingBox()).width).toBeCloseTo(savedWidth,0);
+ await page.getByRole('separator',{name:'Ширина боковой панели'}).dblclick();expect((await sidebar.boundingBox()).width).toBeCloseTo(272,0);
+});
+
+test('narrow screen opens sidebar over content and closes it on navigation',async({page},testInfo)=>{
+ await page.setViewportSize({width:390,height:844});await mount(page);
+ await expect(page.locator('#section-sidebar')).toBeHidden();
+ await page.getByRole('button',{name:'Развернуть боковую панель'}).click();await expect(page.locator('#section-sidebar')).toBeVisible();
+ await page.getByRole('button',{name:'Закрыть боковую панель'}).click();await expect(page.locator('#section-sidebar')).toBeHidden();
+ await page.getByRole('button',{name:'Настройки',exact:true}).click();await expect(page.locator('.settings-screen')).toBeVisible();await expect(page.getByRole('button',{name:'Настройки',exact:true})).toHaveAttribute('aria-current','page');
+ await page.getByRole('button',{name:'Развернуть боковую панель'}).click();
+ await page.getByRole('button',{name:'Серверы MCP',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Добавить сервер MCP'})).toBeVisible();
+ await page.screenshot({path:testInfo.outputPath('mobile-settings.png')});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });

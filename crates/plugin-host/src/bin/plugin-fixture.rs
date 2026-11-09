@@ -48,6 +48,15 @@ fn main() {
             println!("{response}");
             continue;
         }
+        if method == "images.available" {
+            let result: Value =
+                serde_json::from_slice(&std::fs::read("image-generator.json").unwrap()).unwrap();
+            println!(
+                "{}",
+                json!({"jsonrpc":"2.0","id":request["id"],"result":result})
+            );
+            continue;
+        }
         if method == "initialize" && std::path::Path::new("initialize-service").exists() {
             println!(
                 "{}",
@@ -210,6 +219,11 @@ impl FixtureTools {
     }
     fn handle(&mut self, method: &str, params: &Value) -> Result<Value, String> {
         if method == "tools.list" {
+            if std::path::Path::new("image-generator.json").exists() {
+                return Ok(
+                    json!([{"name":"generate_image","description":"fixture image generator","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"sideEffect":true},{"name":"image_status","description":"fixture image status","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"sideEffect":false}]),
+                );
+            }
             let output = json!({"type":"object","required":["value","runId","callId","pid"],"properties":{"value":{},"runId":{"type":"string"},"callId":{"type":"string"},"pid":{"type":"integer"}},"additionalProperties":false});
             return Ok(json!([
                 {"name":"echo","description":"Echo a value from the fixture process","inputSchema":{"type":"object","properties":{"value":{}},"required":["value"],"additionalProperties":false},"outputSchema":output,"sideEffect":false},
@@ -236,6 +250,28 @@ impl FixtureTools {
                     return Err("tool identity already started".into());
                 }
                 let name = params["name"].as_str().ok_or("missing name")?;
+                if std::path::Path::new("image-generator.json").exists() {
+                    self.audit(method, params)?;
+                    let config: Value =
+                        serde_json::from_slice(&std::fs::read("image-generator.json").unwrap())
+                            .unwrap();
+                    let result = if config["fail"] == true {
+                        json!({"status":"failed","error":"Selected generator failed"})
+                    } else {
+                        json!({"status":"completed","output":{"jobId":"fixture-image","status":if name=="generate_image" {"running"}else{"completed"}}})
+                    };
+                    self.jobs.insert(
+                        key,
+                        FixtureToolJob {
+                            snapshot: std::sync::Arc::new(std::sync::Mutex::new(result)),
+                            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                                false,
+                            )),
+                            worker: None,
+                        },
+                    );
+                    return Ok(Value::Null);
+                }
                 if !matches!(name, "echo" | "delayed_write") {
                     return Err("unknown fixture tool".into());
                 }

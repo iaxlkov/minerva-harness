@@ -35,6 +35,7 @@ impl ContextService {
         db.execute_batch("PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS workspace (session TEXT PRIMARY KEY, settings TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS selected_skills (session TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(session,name));
+            CREATE TABLE IF NOT EXISTS image_generator_choice (session TEXT PRIMARY KEY, generator TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS summaries (session TEXT PRIMARY KEY, prefix TEXT NOT NULL, summary TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, session TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL);").map_err(|e|e.to_string())?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS attachment_access(session TEXT NOT NULL,attachment TEXT NOT NULL REFERENCES attachments(id),PRIMARY KEY(session,attachment));").map_err(|e|e.to_string())?;

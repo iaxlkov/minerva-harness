@@ -68,6 +68,8 @@ Host определяет потребителя по процессу, пров
 
 ## Harness tool contract
 
+Генераторы изображений расширяют общий механизм харнеса через capability `image-generation`; контракт, проверка доступности и выбор пользователя описаны в [image-generation.md](image-generation.md).
+
 Installed packages may declare the `tools` capability. `tools.list` returns SDK
 `ToolDefinition[]` (`name`, `description`, `inputSchema`, `outputSchema`,
 `sideEffect`). Raw names use ASCII letters, digits and underscores, at most64

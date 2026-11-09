@@ -1,5 +1,6 @@
 //! Cordis owns plugin lifetimes; the built-in manager publishes the roster service.
 mod builtin;
+mod images;
 use crate::providers::{ProviderPlugin, ProviderService};
 use crate::shell::{ShellPlugin, ShellService};
 use cordis::event::{observer_sync, ListenerRegistrationError};
@@ -223,6 +224,7 @@ impl ManagerService {
     }
     async fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
+        self.harness.tools.revoke_owner(images::OWNER);
         let _lifecycle = self.lifecycle.lock().await;
         self.external.shutdown().await;
         if let Some(handle) = self.example.lock().await.take() {
@@ -311,6 +313,7 @@ impl PluginManager {
         });
         let context = Context::new();
         let example_events = Arc::new(AtomicUsize::new(0));
+        images::register(&harness.tools, external.clone(), harness.context.clone())?;
         let service = Arc::new(ManagerService {
             harness: harness.clone(),
             context: context.clone(),
@@ -576,6 +579,11 @@ impl PluginManager {
                 }
                 for mut definition in definitions {
                     let raw_name = definition.name.clone();
+                    if entry.manifest.as_ref().is_some_and(images::is_generator)
+                        && matches!(raw_name.as_str(), "generate_image" | "image_status")
+                    {
+                        continue;
+                    }
                     if raw_name.is_empty()
                         || raw_name.len() > 64
                         || !raw_name
@@ -619,6 +627,11 @@ impl PluginManager {
             }
         }
         let admitted = self.harness.tools.snapshot();
+        let admitted = if images::has_generators(&service.external) {
+            admitted
+        } else {
+            admitted.without_owner(images::OWNER)
+        };
         let settings = self.harness.context.workspace_get(session)?;
         Ok(if self.harness.local && settings.cwd.is_some() {
             admitted

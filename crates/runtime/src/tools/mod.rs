@@ -198,6 +198,10 @@ impl AdmittedTools {
         self.0.retain(|_, t| t.owner != "native.workspace");
         self
     }
+    pub(crate) fn without_owner(mut self, owner: &str) -> Self {
+        self.0.retain(|_, t| t.owner != owner);
+        self
+    }
     pub async fn execute(
         &self,
         name: &str,

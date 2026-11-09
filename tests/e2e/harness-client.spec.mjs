@@ -36,14 +36,13 @@ test('Ollama preset discovers and saves models without an API key',async({page})
  import {Settings} from './apps/web/src/pages/settings/Settings';
  import {PluginRoot,createBrowserComposition} from './apps/web/src/app/plugins';
  const host=await createBrowserComposition();
- function App(){const [providers,setProviders]=React.useState([]);return <PluginRoot host={host}><Settings providers={providers} onChange={setProviders} activePlugins={[]}/></PluginRoot>;}
+ function App(){const [providers,setProviders]=React.useState([]);return <PluginRoot host={host}><Settings placement="body" tab="models" onSelectPage={()=>{}} providers={providers} onChange={setProviders} activePlugins={[]}/></PluginRoot>;}
  createRoot(document.getElementById('root')).render(<App/>);`,async(method,params)=>{
   calls.push([method,params]);
   if(method==='discover_models')return ['qwen3:8b'];
   if(method==='save_model_provider')return [{...params.provider,hasKey:false}];
   throw Error(method);
  });
- await page.getByRole('button',{name:'Настройки',exact:true}).click();
  await page.getByRole('button',{name:'Добавить провайдера моделей'}).click();
  await page.getByRole('combobox',{name:'Шаблон',exact:true}).click();
  await page.getByRole('option',{name:'Ollama',exact:true}).click();

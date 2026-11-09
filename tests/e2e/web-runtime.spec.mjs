@@ -95,6 +95,15 @@ test('real Rust Host persists chat across reload and observes a run after the ta
   await expect.poll(async()=>(await rpc('runs.get',cancelledHandle)).status).toBe('cancelled');
   await restored.reload();
   await expect(restored.locator('.message.assistant')).toHaveCount(2);
+  await restored.setViewportSize({width:390,height:844});
+  await restored.getByRole('button',{name:'Настройки',exact:true}).click();
+  await expect(restored.locator('.settings-screen')).toBeVisible();
+  expect(await restored.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await restored.getByRole('button',{name:'Развернуть боковую панель'}).click();
+  await expect(restored.getByRole('dialog')).toBeVisible();
+  await restored.getByRole('button',{name:'Серверы MCP',exact:true}).click();
+  await expect(restored.getByRole('dialog')).toHaveCount(0);
+  await expect(restored.getByRole('button',{name:'Добавить сервер MCP'})).toBeVisible();
  }finally{
   if(configured)await rpc('delete_model_provider',{id:providerId}).catch(()=>{});
   host.kill();await new Promise(resolve=>{if(host.exitCode!==null)resolve();else host.once('exit',resolve);});

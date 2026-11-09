@@ -51,13 +51,13 @@ test('Host isolates broken packages, slow calls and bad catalogues; UI follows c
     expect(slowFinished).toBe(false);expect(Date.now()-started).toBeLessThan(2000);
     expect((await slow).ok).toBe(false);
     await page.locator('.settings-open').click();
-    const dialog=page.getByRole('dialog');
+    const dialog=page.locator('.navigation-shell');
     await dialog.getByRole('button',{name:'Healthy settings'}).click();
     await expect(dialog.getByRole('heading',{name:'Healthy panel'})).toBeVisible();
     await rpc('plugins.call',{id:'healthy',method:'test.exit',params:{}});
     await expect(dialog.getByRole('button',{name:'Healthy settings'})).toHaveCount(0,{timeout:10000});
     await expect(dialog.getByRole('button',{name:'Модели',exact:true})).toHaveAttribute('aria-current','page');
-    await dialog.getByRole('button',{name:'Закрыть настройки'}).click();
+    await page.getByRole('button',{name:'Чаты',exact:true}).click();
     await page.getByRole('button',{name:'Плагины',exact:true}).click();
     const row=page.locator('.plugin-row').filter({hasText:'healthy'});
     await expect(row.getByRole('alert')).toBeVisible();
@@ -75,7 +75,7 @@ test('Host isolates broken packages, slow calls and bad catalogues; UI follows c
     expect(paused.find(p=>p.id==='slow').requestedEnabled).toBe(false);
     await page.locator('.settings-open').click();
     await expect(dialog.getByRole('button',{name:'Healthy settings'})).toHaveCount(0);
-    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Плагины',exact:true}).click();
     await master.click();
     await expect(master).toBeChecked();
     paused=await rpc('list_plugins');

@@ -326,7 +326,7 @@ impl Host {
                         state.package = Some(package.clone());
                     }
                     if package.manifest.capabilities.iter().any(|c| {
-                        !matches!(c.as_str(), "model-engine" | "local-environment" | "tools")
+                        !matches!(c.as_str(), "model-engine" | "local-environment" | "tools" | "image-generation")
                     }) {
                         return Err("unsupported host capability grant".into());
                     }

@@ -1,3 +1,4 @@
+import type {ShellNavigationProps,ShellSectionProps} from '../../../../packages/plugin-sdk/src/slots.types';
 import {workspacePlugin} from '../plugins/workspaces';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
@@ -20,7 +21,17 @@ declare module '../../../../packages/plugin-sdk/src/context-menus.ts' {
  }
 }
 /** Public UI contracts contain display data and callbacks, never a plugin context. */
+export type ShellSlotProps=ShellNavigationProps;
 export interface AppSlotProps {
+ 'shell.sections':ShellSectionProps;
+ 'shell.rail.start':ShellSlotProps;
+ 'shell.rail.end':ShellSlotProps;
+ 'shell.sidebar.header':ShellSlotProps;
+ 'shell.sidebar.footer':ShellSlotProps;
+ 'shell.sidebar.content':ShellSlotProps;
+ 'shell.header.actions':ShellSlotProps;
+ 'shell.content.before':ShellSlotProps;
+ 'shell.content.after':ShellSlotProps;
  'root.layout':{children:ReactNode};
  'navigation.items':{session:SessionInfo;sessions:SessionInfo[];disabled?:boolean;onNew:(workspaceId?:string)=>void;onSession:(session:SessionInfo)=>void};
  'settings.pages':SettingsPageProps;
