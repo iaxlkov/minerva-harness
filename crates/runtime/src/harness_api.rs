@@ -22,6 +22,17 @@ struct LspSession {
     #[serde(default = "default_lsp_server")]
     server_id: String,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LspDocument {
+    session_id: String,
+    path: String,
+    #[serde(default)] version: i64,
+    #[serde(default)] text: Option<String>,
+    #[serde(default)] operation: Option<String>,
+    #[serde(default)] line: u32,
+    #[serde(default)] character: u32,
+}
 fn default_lsp_server() -> String { "rust".into() }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -151,6 +162,7 @@ impl Runtime {
                 let projects=self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?;
                 let project=projects.list()?.into_iter().find(|p|p.session_ids.contains(&a.session_id)).ok_or("Workspace not found")?;
                 let root=project.path.as_ref().ok_or("Workspace directory is unavailable")?;
+                self.plugins.sync_lsp().await?;
                 let service=self.plugins.context().try_service::<crate::lsp::LspService>().map_err(|e|e.to_string())?;
                 match method {
                     "mh-lsp.start" => service.start(&project.id,std::path::Path::new(root),&a.server_id).await?,
@@ -158,6 +170,25 @@ impl Runtime {
                     _ => (),
                 }
                 Ok(serde_json::json!({"workspaceId":project.id,"running":service.running(&project.id,&a.server_id).await}))
+            }
+            "mh-lsp.open" | "mh-lsp.change" | "mh-lsp.close" | "mh-lsp.query" | "mh-lsp.diagnostics" => {
+                let a: LspDocument = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                if !harness.local { return Err("LSP is unavailable in this profile".into()); }
+                let projects = self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e| e.to_string())?;
+                let project = projects.list()?.into_iter().find(|p| p.session_ids.contains(&a.session_id)).ok_or("Workspace not found")?;
+                let root = std::path::Path::new(project.path.as_ref().ok_or("Workspace directory is unavailable")?);
+                self.plugins.sync_lsp().await?;
+                let service = self.plugins.context().try_service::<crate::lsp::LspService>().map_err(|e| e.to_string())?;
+                match method {
+                    "mh-lsp.open" => encoded(service.open_document(&project.id, root, &a.session_id, &a.path, a.version, a.text.as_deref().ok_or("Document text required")?).await?),
+                    "mh-lsp.change" => { service.update_document(&project.id, root, &a.session_id, &a.path, a.version, Some(a.text.as_deref().ok_or("Document text required")?)).await?; Ok(Value::Null) },
+                    "mh-lsp.close" => { service.update_document(&project.id, root, &a.session_id, &a.path, a.version, None).await?; Ok(Value::Null) },
+                    "mh-lsp.query" => service.query_document(&project.id, root, &a.session_id, &a.path, a.operation.as_deref().ok_or("LSP operation required")?, a.line, a.character).await,
+                    _ => {
+                        encoded(service.document_diagnostics(&project.id, root, &a.session_id, &a.path).await?)
+                    }
+                }
             }
             "workspace.get" => {
                 let a: Session = args(params)?;

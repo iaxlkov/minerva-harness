@@ -26,6 +26,16 @@ pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "sessions",
     "agent-loop",
 ];
+/// Static declaration of a language server contributed by a trusted local plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LanguageServerContribution {
+    pub id: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub extensions: BTreeMap<String, String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
@@ -42,6 +52,8 @@ pub struct Manifest {
     pub provides: BTreeMap<String, u32>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub language_servers: Vec<LanguageServerContribution>,
     #[serde(default)]
     pub backend: Option<Backend>,
     #[serde(default)]
@@ -86,6 +98,48 @@ impl Manifest {
                 return Err("invalid service name or version".into());
             }
         }
+        if self.language_servers.len() > 16
+            || self.language_servers.iter().any(|server| {
+                server.id.is_empty()
+                    || server.id.len() > 64
+                    || !server
+                        .id
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                    || server.command.trim().is_empty()
+                    || server.command.len() > 1024
+                    || server.args.len() > 64
+                    || server.args.iter().any(|arg| arg.len() > 4096)
+                    || server.extensions.is_empty()
+                    || server.extensions.len() > 64
+                    || server.extensions.iter().any(|(ext, language)| {
+                        ext.len() < 2
+                            || ext.len() > 32
+                            || !ext.starts_with('.')
+                            || !ext[1..]
+                                .bytes()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                            || language.is_empty()
+                            || language.len() > 64
+                    })
+            })
+        {
+            return Err("invalid language server contribution".into());
+        }
+        if self.language_servers.iter().enumerate().any(|(i, server)| {
+            self.language_servers[..i].iter().any(|other| {
+                other.id == server.id
+                    || server
+                        .extensions
+                        .keys()
+                        .any(|ext| other.extensions.contains_key(ext))
+            })
+        }) {
+            return Err("duplicate language server id or extension".into());
+        }
+        if !self.language_servers.is_empty() && self.backend.is_none() {
+            return Err("language server contribution requires a backend".into());
+        }
         if !self.provides.is_empty() && self.backend.is_none() {
             return Err("service provider requires a backend".into());
         }
@@ -125,5 +179,30 @@ impl Manifest {
             return Err("plugin has no entry".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_manifest_tests {
+    use super::Manifest;
+    use serde_json::json;
+
+    fn manifest(servers: serde_json::Value) -> Manifest {
+        serde_json::from_value(json!({"id":"example.language", "version":"1", "apiVersion":1, "backend":{"kind":"process","entry":"plugin.exe"}, "languageServers":servers})).unwrap()
+    }
+
+    #[test]
+    fn language_contributions_validate_extensions_and_conflicts() {
+        assert!(
+            manifest(json!([{"id":"one", "command":"server", "extensions":{".rs":"rust"}}]))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            manifest(json!([{"id":"one", "command":"server", "extensions":{".RS":"rust"}}]))
+                .validate()
+                .is_err()
+        );
+        assert!(manifest(json!([{"id":"one", "command":"server", "extensions":{".rs":"rust"}},{"id":"two", "command":"server", "extensions":{".rs":"rust"}}])).validate().is_err());
     }
 }

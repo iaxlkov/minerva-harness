@@ -6068,7 +6068,7 @@ dependencies = [
 [[package]]
 name = "tokio-lsp-client"
 version = "0.0.1"
-source = "git+https://github.com/kviron/minerva-harness-tokio-lsp-client?rev=5d2e0f94e7b4298a293b5e520cc688a1559c09fa#5d2e0f94e7b4298a293b5e520cc688a1559c09fa"
+source = "git+https://github.com/kviron/minerva-harness-tokio-lsp-client?rev=71e08aa#71e08aad025cc0d76c7ef4619b99f30f6b3f97cd"
 dependencies = [
  "log",
  "lsp-types",

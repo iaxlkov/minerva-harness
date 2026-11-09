@@ -16,6 +16,11 @@ export type {WorkspaceSettings,ToolDefinition,PendingInteraction,InteractionAnsw
 type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
+ 'mh-lsp.open':Endpoint<{sessionId:string;path:string;version:number;text:string},string>;
+ 'mh-lsp.change':Endpoint<{sessionId:string;path:string;version:number;text:string},null>;
+ 'mh-lsp.close':Endpoint<{sessionId:string;path:string},null>;
+ 'mh-lsp.query':Endpoint<{sessionId:string;path:string;operation:'completion'|'hover'|'definition'|'references';line:number;character:number},import('./generated').JsonValue>;
+ 'mh-lsp.diagnostics':Endpoint<{sessionId:string;path:string},import('./generated').JsonValue[]>;
  'mh-lsp.start':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;
  'mh-lsp.status':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;
  'mh-lsp.stop':Endpoint<{sessionId:string;serverId?:string},{workspaceId:string;running:boolean}>;

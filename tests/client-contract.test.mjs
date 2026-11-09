@@ -103,3 +103,10 @@ test('desktop maps supervised run methods to native command names without changi
  await client.call('runs.get',{sessionId:'s',runId:'r'});
  assert.deepEqual(calls[1],['run_get',{sessionId:'s',runId:'r'}]);
 });
+
+test('desktop routes LSP document requests through the shared runtime',async()=>{
+ const calls=[];const client=createTauriClient(async(command,args)=>{calls.push([command,args]);return null;});
+ const params={sessionId:'s',path:'src/main.rs',version:1,text:'unsaved'};
+ await client.call('mh-lsp.open',params);
+ assert.deepEqual(calls,[['harness_rpc',{method:'mh-lsp.open',params}]]);
+});

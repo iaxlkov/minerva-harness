@@ -14,11 +14,14 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_lsp_client::{
     Client,
-    client::{NotificationParameters, OutgoingRequest, RequestParameters, ServerMessage},
+    client::{
+        NotificationParameters, OutgoingNotification, OutgoingRequest, RequestParameters,
+        ServerMessage,
+    },
     types::{InitializeParams, WorkspaceFolder},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageServer {
     pub id: String,
     pub command: String,
@@ -37,6 +40,7 @@ struct Running {
     client: Client,
     events: tokio::task::JoinHandle<()>,
     diagnostics: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    documents: HashMap<String, (String, i64)>,
 }
 
 enum JsonResponse {}
@@ -45,6 +49,68 @@ impl OutgoingRequest for JsonResponse {
     type Result = serde_json::Value;
     const METHOD: &'static str = "mh/response";
 }
+macro_rules! notification {
+    ($name:ident, $method:literal) => {
+        enum $name {}
+        impl OutgoingNotification for $name {
+            type Params = serde_json::Value;
+            const METHOD: &'static str = $method;
+        }
+    };
+}
+notification!(DidOpen, "textDocument/didOpen");
+notification!(DidChange, "textDocument/didChange");
+notification!(DidClose, "textDocument/didClose");
+macro_rules! request {
+    ($name:ident, $method:literal) => {
+        enum $name {}
+        impl OutgoingRequest for $name {
+            type Params = serde_json::Value;
+            type Result = serde_json::Value;
+            const METHOD: &'static str = $method;
+        }
+    };
+}
+request!(Completion, "textDocument/completion");
+request!(Hover, "textDocument/hover");
+request!(Definition, "textDocument/definition");
+request!(References, "textDocument/references");
+
+fn document_uri(root: &Path, path: &str) -> Result<String, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err("Invalid workspace file path".into());
+    }
+    let joined = root.join(path);
+    let file = match joined.canonicalize() {
+        Ok(file) if file.is_file() => file,
+        Ok(_) => return Err("Path is not a file".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if std::fs::symlink_metadata(&joined).is_ok() {
+                return Err("Unresolvable workspace file".into());
+            }
+            let parent = joined
+                .parent()
+                .ok_or("Invalid file path")?
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            parent.join(joined.file_name().ok_or("Invalid file path")?)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if !file.starts_with(&root) {
+        return Err("File is outside workspace".into());
+    }
+    url::Url::from_file_path(file)
+        .map(|url| url.to_string())
+        .map_err(|_| "Invalid file URI".into())
+}
+
 #[derive(Default)]
 pub struct LspService {
     state: Mutex<State>,
@@ -84,6 +150,21 @@ impl LspService {
         }
         state.providers.insert(provider.id.clone(), provider);
         Ok(())
+    }
+
+    pub async fn external_provider_ids(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .await
+            .providers
+            .keys()
+            .filter(|id| id.starts_with("plugin:"))
+            .cloned()
+            .collect()
+    }
+
+    pub async fn provider(&self, id: &str) -> Option<LanguageServer> {
+        self.state.lock().await.providers.get(id).cloned()
     }
 
     pub async fn provider_for_file(&self, path: &Path) -> Option<LanguageServer> {
@@ -212,10 +293,170 @@ impl LspService {
                 client,
                 events,
                 diagnostics,
+                documents: HashMap::new(),
             },
         );
         Ok(())
     }
+    async fn document_owner(
+        &self,
+        workspace: &str,
+        root: &Path,
+        path: &str,
+    ) -> Result<Option<String>, String> {
+        let uri = document_uri(root, path)?;
+        let provider = self
+            .provider_for_file(Path::new(path))
+            .await
+            .ok_or("No language server for file")?;
+        Ok(self
+            .state
+            .lock()
+            .await
+            .servers
+            .get(&(workspace.into(), provider.id))
+            .and_then(|server| server.documents.get(&uri).map(|(owner, _)| owner.clone())))
+    }
+
+    pub async fn open_document(
+        &self,
+        workspace: &str,
+        root: &Path,
+        session: &str,
+        path: &str,
+        version: i64,
+        text: &str,
+    ) -> Result<String, String> {
+        if !(0..=i32::MAX as i64).contains(&version) || text.len() > 4_000_000 {
+            return Err("Invalid document version or size".into());
+        }
+        let uri = document_uri(root, path)?;
+        let provider = self
+            .provider_for_file(Path::new(path))
+            .await
+            .ok_or("No language server for file")?;
+        let ext = format!(
+            ".{}",
+            Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .ok_or("File has no extension")?
+                .to_lowercase()
+        );
+        let language = provider.extensions.get(&ext).ok_or("Unknown language")?;
+        self.start(workspace, root, &provider.id).await?;
+        let mut state = self.state.lock().await;
+        let server = state
+            .servers
+            .get_mut(&(workspace.into(), provider.id.clone()))
+            .ok_or("LSP server stopped")?;
+        if server.documents.contains_key(&uri) {
+            return Err("Document is already open in this workspace".into());
+        }
+        server.client.send_notification::<DidOpen>(serde_json::json!({"textDocument":{"uri":uri,"languageId":language,"version":version,"text":text}})).await.map_err(|e| e.to_string())?;
+        server.documents.insert(uri, (session.into(), version));
+        Ok(provider.id)
+    }
+
+    pub async fn update_document(
+        &self,
+        workspace: &str,
+        root: &Path,
+        session: &str,
+        path: &str,
+        version: i64,
+        text: Option<&str>,
+    ) -> Result<(), String> {
+        if text.is_some_and(|text| text.len() > 4_000_000) {
+            return Err("Document too large".into());
+        }
+        let uri = document_uri(root, path)?;
+        let provider = self
+            .provider_for_file(Path::new(path))
+            .await
+            .ok_or("No language server for file")?;
+        let mut state = self.state.lock().await;
+        let server = state
+            .servers
+            .get_mut(&(workspace.into(), provider.id))
+            .ok_or("LSP server stopped")?;
+        let (owner, previous) = server.documents.get(&uri).ok_or("Document is not open")?;
+        if owner != session {
+            return Err("Document is open in another session".into());
+        }
+        if let Some(text) = text {
+            if version <= *previous || version > i32::MAX as i64 {
+                return Err("Document version must increase".into());
+            }
+            server.client.send_notification::<DidChange>(serde_json::json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":text}]})).await.map_err(|e| e.to_string())?;
+            server.documents.insert(uri, (session.into(), version));
+        } else {
+            server
+                .client
+                .send_notification::<DidClose>(serde_json::json!({"textDocument":{"uri":uri}}))
+                .await
+                .map_err(|e| e.to_string())?;
+            server.documents.remove(&uri);
+            server.diagnostics.lock().await.remove(&uri);
+        }
+        Ok(())
+    }
+
+    pub async fn query_document(
+        &self,
+        workspace: &str,
+        root: &Path,
+        session: &str,
+        path: &str,
+        method: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<serde_json::Value, String> {
+        let uri = document_uri(root, path)?;
+        let provider = self
+            .provider_for_file(Path::new(path))
+            .await
+            .ok_or("No language server for file")?;
+        let state = self.state.lock().await;
+        let server = state
+            .servers
+            .get(&(workspace.into(), provider.id))
+            .ok_or("LSP server stopped")?;
+        if server
+            .documents
+            .get(&uri)
+            .is_none_or(|(owner, _)| owner != session)
+        {
+            return Err("Document is not open in this session".into());
+        }
+        let client = server.client.clone();
+        drop(state);
+        let mut params = serde_json::json!({"textDocument":{"uri":uri}, "position":{"line":line,"character":character}});
+        if method == "references" {
+            params["context"] = serde_json::json!({"includeDeclaration":true});
+        }
+        macro_rules! call {
+            ($t:ty) => {{
+                let mut response = client
+                    .send_request::<$t>(params)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                tokio::time::timeout(Duration::from_secs(15), response.next())
+                    .await
+                    .map_err(|_| "LSP request timed out".to_owned())?
+                    .ok_or("LSP response stream closed")?
+                    .map_err(|e| format!("{}: {}", e.code, e.message))
+            }};
+        }
+        match method {
+            "completion" => call!(Completion),
+            "hover" => call!(Hover),
+            "definition" => call!(Definition),
+            "references" => call!(References),
+            _ => Err("Unsupported LSP request".into()),
+        }
+    }
+
     pub async fn stop(&self, workspace: &str, id: &str) -> Result<(), String> {
         let server = self
             .state
@@ -245,6 +486,36 @@ impl LspService {
             stop_server(server).await;
         }
     }
+    pub async fn document_diagnostics(
+        &self,
+        workspace: &str,
+        root: &Path,
+        session: &str,
+        path: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let uri = document_uri(root, path)?;
+        let provider = self
+            .provider_for_file(Path::new(path))
+            .await
+            .ok_or("No language server for file")?;
+        let state = self.state.lock().await;
+        let server = state
+            .servers
+            .get(&(workspace.into(), provider.id))
+            .ok_or("LSP server stopped")?;
+        if server
+            .documents
+            .get(&uri)
+            .is_none_or(|(owner, _)| owner != session)
+        {
+            return Err("Document is not open in this session".into());
+        }
+        let diagnostics = server.diagnostics.clone();
+        drop(state);
+        let value = diagnostics.lock().await.get(&uri).cloned();
+        Ok(value.into_iter().collect())
+    }
+
     pub async fn diagnostics(&self, workspace: &str, id: &str) -> Vec<serde_json::Value> {
         let diagnostics = self
             .state
@@ -288,7 +559,7 @@ async fn stop_server(mut server: Running) {
     server.events.abort();
 }
 
-pub(crate) struct LspPlugin;
+pub(crate) struct LspPlugin(pub bool);
 impl Plugin for LspPlugin {
     type Config = ();
     type Input = ();
@@ -298,9 +569,53 @@ impl Plugin for LspPlugin {
         Ok(())
     }
     async fn apply(&self, ctx: Context, _: &()) -> Result<(), Self::ApplyError> {
-        ctx.try_service::<crate::workspaces::WorkspaceService>()
+        let workspaces = ctx
+            .try_service::<crate::workspaces::WorkspaceService>()
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let service = Arc::new(LspService::default());
+        if self.0 {
+            let tools = ctx
+                .try_service::<crate::tools::ToolRegistry>()
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let owned = tools.clone();
+            let _revoke = ctx
+                .effect_sync(move || owned.revoke_owner("native.lsp"))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let lsp = service.clone();
+            let serial = Arc::new(Mutex::new(()));
+            tools.register("native.lsp", crate::tools::ToolDefinition {
+                name:"lsp".into(), description:"Navigate source code using the workspace language server. Positions are zero-based UTF-16.".into(),
+                input_schema:serde_json::json!({"type":"object","properties":{"path":{"type":"string","minLength":1},"operation":{"type":"string","enum":["hover","definition","references"]},"line":{"type":"integer","minimum":0,"maximum":4294967295u64},"character":{"type":"integer","minimum":0,"maximum":4294967295u64}},"required":["path","operation","line","character"],"additionalProperties":false}),
+                output_schema:serde_json::json!({"type":"object","properties":{"result":{}},"required":["result"]}), side_effect:false,
+            }, move |context,args| {
+                let lsp=lsp.clone();let workspaces=workspaces.clone();let serial=serial.clone();
+                Box::pin(async move { tokio::spawn(async move {
+                    let _guard=serial.lock().await;
+                    let project=workspaces.list()?.into_iter().find(|project|project.session_ids.contains(&context.session_id)).ok_or("Workspace not found")?;
+                    let root=std::path::PathBuf::from(project.path.ok_or("Workspace directory unavailable")?);
+                    let path=args["path"].as_str().ok_or("Missing path")?;
+                    let operation=args["operation"].as_str().ok_or("Missing operation")?;
+                    let owner=lsp.document_owner(&project.id,&root,path).await?;
+                    let opened=match owner {
+                        Some(owner) if owner==context.session_id => false,
+                        Some(_) => return Err("Document is open in another session".into()),
+                        None => {
+                            let uri=document_uri(&root,path)?;
+                            let file=url::Url::parse(&uri).map_err(|e|e.to_string())?.to_file_path().map_err(|_|"Invalid file URI")?;
+                            let metadata=tokio::fs::metadata(&file).await.map_err(|e|e.to_string())?;
+                            if metadata.len()>4_000_000 { return Err("Document too large".into()); }
+                            let source=tokio::fs::read_to_string(file).await.map_err(|e|e.to_string())?;
+                            lsp.open_document(&project.id,&root,&context.session_id,path,1,&source).await?;
+                            true
+                        }
+                    };
+                    let query=lsp.query_document(&project.id,&root,&context.session_id,path,operation,args["line"].as_u64().ok_or("Missing line")? as u32,args["character"].as_u64().ok_or("Missing character")? as u32);
+                    let result=tokio::select! { result=query => result, _=context.cancellation.cancelled()=>Err("LSP operation cancelled".into()) };
+                    if opened { let _=lsp.update_document(&project.id,&root,&context.session_id,path,0,None).await; }
+                    result.map(|result|serde_json::json!({"result":result}))
+                }).await.map_err(|error| error.to_string())? })
+            }).map_err(std::io::Error::other)?;
+        }
         let owned = service.clone();
         let _cleanup = ctx
             .effect(move || async move {
@@ -418,6 +733,141 @@ mod tests {
         fiber.dispose().await.unwrap();
         assert!(lsp.provider_for_file(Path::new("lib.rs")).await.is_none());
         assert!(ctx.try_service::<RustLanguageService>().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires rust-analyzer"]
+    async fn rust_analyzer_returns_hover_for_workspace_document() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"mh-lsp-proof\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let source = "fn greeting() -> i32 { 1 }\nfn main() { let _ = greeting(); }\n";
+        std::fs::write(temp.path().join("src/main.rs"), source).unwrap();
+        let service = LspService::default();
+        service
+            .register(LanguageServer {
+                id: "rust".into(),
+                command: "rust-analyzer".into(),
+                args: vec![],
+                extensions: HashMap::from([(".rs".into(), "rust".into())]),
+            })
+            .await
+            .unwrap();
+        service
+            .open_document("rust-project", temp.path(), "s", "src/main.rs", 1, source)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(40), async {
+            loop {
+                if let Ok(result) = service
+                    .query_document(
+                        "rust-project",
+                        temp.path(),
+                        "s",
+                        "src/main.rs",
+                        "hover",
+                        1,
+                        22,
+                    )
+                    .await
+                {
+                    if !result.is_null() && result.to_string().contains("greeting") {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .expect("rust-analyzer hover");
+        service.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Python 3 for the fixture language server"]
+    async fn documents_are_versioned_and_scoped_to_session_and_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/mh_lsp_server.py");
+        let service = LspService::default();
+        service
+            .register(LanguageServer {
+                id: "test".into(),
+                command: "python".into(),
+                args: vec![fixture.to_str().unwrap().into()],
+                extensions: HashMap::from([(".test".into(), "test".into())]),
+            })
+            .await
+            .unwrap();
+        service
+            .open_document("a", &a, "session-a", "new.test", 1, "before")
+            .await
+            .unwrap();
+        service
+            .open_document("b", &b, "session-b", "new.test", 1, "other")
+            .await
+            .unwrap();
+        assert!(
+            service
+                .open_document("a", &a, "other", "new.test", 1, "bad")
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .update_document("a", &a, "session-a", "new.test", 1, Some("bad"))
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .update_document("a", &a, "other", "new.test", 2, Some("bad"))
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .open_document("a", &a, "session-a", "../escape.test", 1, "bad")
+                .await
+                .is_err()
+        );
+        service
+            .update_document("a", &a, "session-a", "new.test", 2, Some("after"))
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .query_document("a", &a, "session-a", "new.test", "hover", 0, 0)
+                .await
+                .unwrap()["contents"],
+            "after"
+        );
+        assert_eq!(
+            service
+                .query_document("b", &b, "session-b", "new.test", "hover", 0, 0)
+                .await
+                .unwrap()["contents"],
+            "other"
+        );
+        service
+            .update_document("a", &a, "session-a", "new.test", 0, None)
+            .await
+            .unwrap();
+        assert!(
+            service
+                .query_document("a", &a, "session-a", "new.test", "hover", 0, 0)
+                .await
+                .is_err()
+        );
+        service.shutdown().await;
     }
 
     #[tokio::test]

@@ -98,3 +98,45 @@ Only outgoing `engine.start` permits32MiB for validated inline image inputs;
 plugins must avoid echoing base64 in poll snapshots. Mutable state belongs in
 `initialize.dataDir`, outside the immutable package digest. Native trusted
 plugins and explicitly approved shell commands are not an OS security sandbox.
+
+
+## Языковые серверы
+
+Включённый локальный backend-плагин может объявить в `plugin.json` серверы:
+
+```json
+{
+  "id": "example.python",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "backend": {"kind": "process", "entry": "plugin.exe"},
+  "languageServers": [{
+    "id": "python",
+    "command": "pyright-langserver",
+    "args": ["--stdio"],
+    "extensions": {".py": "python", ".pyi": "python"}
+  }]
+}
+```
+
+Идентификатор провайдера в Harness — `plugin:example.python/python`. Команда
+запускается без shell в корне выбранного workspace; сервер устанавливается
+отдельно. Плагины являются доверенным локальным кодом. Расширения и ID
+проверяются, пересечения отвергаются. Выключение, пауза и смена поколения
+плагина отзывают регистрацию и останавливают его серверы. В hosted-профиле
+локальные серверы недоступны.
+
+Транспорт `mh-lsp.open`, `mh-lsp.change`, `mh-lsp.close`, `mh-lsp.query` и
+`mh-lsp.diagnostics` использует `sessionId` и относительный `path`. При
+открытии передаются `text` и целочисленная `version`, при изменении — новый
+полный текст и возрастающая версия. Один открытый файл workspace принадлежит
+одной сессии до закрытия; другие сессии не могут изменить его буфер. `query`
+принимает `operation` (`completion`, `hover`, `definition`, `references`) и
+нулевые `line`, `character` в UTF-16, как в LSP. Diagnostics возвращает
+последнюю публикацию только для открытого файла. Путь проверяется относительно
+реального корня проекта, включая символические ссылки. API не сохраняет файл.
+
+Для агента системный `mh-lsp` также регистрирует инструмент `lsp`: hover,
+definition и references. Он использует открытый несохранённый буфер своей
+сессии либо временно открывает файл с диска и закрывает его после запроса.
+Инструмент доступен только локальной сессии с рабочей папкой.

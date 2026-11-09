@@ -79,6 +79,9 @@ struct ManagerService {
     example_events: Arc<AtomicUsize>,
     external: Arc<minerva_plugin_host::Host>,
     tool_updates: Mutex<()>,
+    lsp_updates: Mutex<()>,
+    lsp_generations: std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
+    lsp_errors: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
     tool_generations: std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
     tool_errors: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
     local: bool,
@@ -88,6 +91,46 @@ impl Service for ManagerService {
 }
 
 impl ManagerService {
+    async fn sync_lsp(&self) {
+        let _guard = self.lsp_updates.lock().await;
+        let Ok(lsp) = self.context.try_service::<crate::lsp::LspService>() else { return; };
+        let roster = self.external.roster();
+        let mut desired = std::collections::BTreeMap::new();
+        for entry in &roster {
+            if !entry.enabled { continue; }
+            if let Some(manifest) = &entry.manifest {
+                for item in &manifest.language_servers {
+                    let id = format!("plugin:{}/{}", entry.id, item.id);
+                    desired.insert(id.clone(), (entry.id.clone(), entry.generation, crate::lsp::LanguageServer {
+                        id, command: item.command.clone(), args: item.args.clone(), extensions: item.extensions.clone().into_iter().collect(),
+                    }));
+                }
+            }
+        }
+        for id in lsp.external_provider_ids().await {
+            let changed = match desired.get(&id) {
+                Some((_, generation, provider)) => {
+                    let previous = self.lsp_generations.lock().unwrap().get(&id).copied();
+                    previous != Some(*generation) || lsp.provider(&id).await.as_ref() != Some(provider)
+                },
+                None => true,
+            };
+            if changed {
+                lsp.unregister(&id).await;
+                self.lsp_generations.lock().unwrap().remove(&id);
+            }
+        }
+        let mut errors = std::collections::BTreeMap::new();
+        for (id, (owner, generation, provider)) in desired {
+            if lsp.provider(&id).await.is_none() {
+                match lsp.register(provider).await {
+                    Ok(()) => { self.lsp_generations.lock().unwrap().insert(id, generation); }
+                    Err(error) => { errors.insert(owner, format!("LSP: {error}")); },
+                }
+            }
+        }
+        *self.lsp_errors.lock().unwrap() = errors;
+    }
     async fn start_example(&self) -> Result<FiberHandle, String> {
         self.context
             .spawn(PreparedPlugin::from_input(
@@ -103,6 +146,7 @@ impl ManagerService {
         let example = self.example.lock().await;
         let optional_enabled = self.external.optional_enabled();
         let tool_errors = self.tool_errors.lock().unwrap().clone();
+        let lsp_errors = self.lsp_errors.lock().unwrap().clone();
         let mut roster = builtin::SYSTEM
             .iter()
             .map(|plugin| PluginInfo {
@@ -155,7 +199,7 @@ impl ManagerService {
                 optional_enabled,
                 can_toggle: true,
                 origin: "installed".into(),
-                error: entry.error.or_else(|| tool_errors.get(&entry.id).cloned()),
+                error: entry.error.or_else(|| tool_errors.get(&entry.id).cloned()).or_else(|| lsp_errors.get(&entry.id).cloned()),
             }
         }));
         roster
@@ -179,6 +223,7 @@ impl ManagerService {
                 self.harness.tools.revoke_owner(&format!("plugin:{id}"));
             }
             self.external.set_enabled(id, enabled).await?;
+            self.sync_lsp().await;
             return Ok(self.list().await);
         }
         self.external.set_example_enabled(enabled).await?;
@@ -205,6 +250,7 @@ impl ManagerService {
             .await;
         external?;
         example?;
+        self.sync_lsp().await;
         Ok(self.list().await)
     }
     async fn set_example_active(&self, enabled: bool) -> Result<(), String> {
@@ -323,6 +369,9 @@ impl PluginManager {
             example_events: example_events.clone(),
             external,
             tool_updates: Mutex::new(()),
+            lsp_updates: Mutex::new(()),
+            lsp_generations: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            lsp_errors: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             tool_generations: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             tool_errors: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             local,
@@ -421,6 +470,10 @@ impl PluginManager {
         self.context
             .try_service::<ManagerService>()
             .map_err(|error| format!("Менеджер плагинов недоступен: {error}"))
+    }
+    pub async fn sync_lsp(&self) -> Result<(), String> {
+        self.service()?.sync_lsp().await;
+        Ok(())
     }
     pub async fn list(&self) -> Result<Vec<PluginInfo>, String> {
         Ok(self.service()?.list().await)
@@ -548,6 +601,7 @@ impl PluginManager {
     pub async fn tools_for(&self, session: &str) -> Result<crate::tools::AdmittedTools, String> {
         use sha2::{Digest, Sha256};
         let service = self.service()?;
+        service.sync_lsp().await;
         let _update = service.tool_updates.lock().await;
         for entry in service.external.roster() {
             let owner = format!("plugin:{}", entry.id);
@@ -895,7 +949,7 @@ mod tests {
                 // This harness-only fixture does not compose session execution.
                 assert_eq!(
                     entry.enabled,
-                    !["sessions", "agent-loop", "workspaces"].contains(&entry.id.as_str())
+                    !["sessions", "agent-loop", "workspaces", "mh-lsp", "mh-lsp-rust"].contains(&entry.id.as_str())
                 );
                 assert!(manager.set_enabled(&entry.id, false).await.is_err());
             }

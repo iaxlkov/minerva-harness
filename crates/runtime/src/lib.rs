@@ -114,8 +114,9 @@ impl Runtime {
                 .await
                 .map_err(|e| RuntimeError::Bootstrap(e.to_string()))?,
             );
-            fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::LspPlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
+            fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::LspPlugin(plugins.harness.local), ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
             fibers.push(ctx.spawn(cordis::PreparedPlugin::from_input(lsp::RustLanguagePlugin, ())).await.map_err(|e| RuntimeError::Bootstrap(e.to_string()))?);
+            plugins.sync_lsp().await.map_err(RuntimeError::Bootstrap)?;
             fibers.push(
                 ctx.spawn(cordis::PreparedPlugin::from_input(
                     runtime_services::AgentLoopPlugin {

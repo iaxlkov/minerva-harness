@@ -195,7 +195,7 @@ impl AdmittedTools {
         self.0.values().map(|r| r.definition.clone()).collect()
     }
     pub fn without_workspace(mut self) -> Self {
-        self.0.retain(|_, t| t.owner != "native.workspace");
+        self.0.retain(|_, t| t.owner != "native.workspace" && t.owner != "native.lsp");
         self
     }
     pub(crate) fn without_owner(mut self, owner: &str) -> Self {
