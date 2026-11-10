@@ -2,7 +2,7 @@ pub mod config;
 pub mod conversation;
 pub mod credential_store;
 pub mod engine;
-pub mod events;
+pub use mh_sessions::events;
 pub mod network_policy;
 pub mod plugins;
 pub mod providers;

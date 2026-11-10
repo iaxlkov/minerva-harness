@@ -1,0 +1,8 @@
+[package]
+name = "mh-runtime-support"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+url = "2"

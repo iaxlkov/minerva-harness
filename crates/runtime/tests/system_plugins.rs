@@ -84,7 +84,7 @@ async fn system_mcp_keeps_real_connections_when_optional_plugins_are_paused() {
         .await
         .unwrap();
     manager.harness.mcp.save(serde_json::from_value(json!({"id":"system-proof","enabled":true,"transport":{"kind":"stdio","command":"node","args":[
-        concat!(env!("CARGO_MANIFEST_DIR"), "/src/mcp/fixture.cjs"), "stdio", dir.path().join("calls.log").to_str().unwrap()
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/mh-mcp/src/fixture.cjs"), "stdio", dir.path().join("calls.log").to_str().unwrap()
     ]}})).unwrap()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while manager.harness.mcp.list()[0].state != "connected" {

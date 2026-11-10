@@ -3,32 +3,31 @@ name = "minerva-runtime"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
+mh-agent-loop = { path = "../../plugins/mh-agent-loop" }
+mh-plugin-manager = { path = "../../plugins/mh-plugin-manager" }
+mh-workspace-tools = { path = "../../plugins/mh-workspace-tools" }
+mh-providers = { path = "../../plugins/mh-providers" }
+mh-workspaces = { path = "../../plugins/mh-workspaces" }
+mh-context = { path = "../../plugins/mh-context" }
+mh-sessions = { path = "../../plugins/mh-sessions" }
+mh-runtime-support = { path = "../runtime-support" }
+mh-mcp = { path = "../../plugins/mh-mcp" }
+mh-tool-runtime = { path = "../../plugins/mh-tool-runtime" }
+mh-shell = { path = "../../plugins/mh-shell" }
+mh-lsp = { path = "../../plugins/mh-lsp" }
+mh-lsp-rust = { path = "../../plugins/mh-lsp-rust" }
 minerva-plugin-sdk = { path = "../plugin-sdk" }
 minerva-plugin-host = { path = "../plugin-host" }
 
 cordis-rs = "=0.11.1"
-rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }
-rig-agent = { version = "0.46.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-jsonschema = { version = "0.33", default-features = false }
-base64 = "0.22"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-sha2 = "0.10"
-cap-std = "3"
-rmcp = { version = "3.9.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
-futures-util = "0.3"
-ts-rs = { version = "=12.0.1", features = ["serde-json-impl"] }
-keyring = { version = "3", features = ["windows-native"] }
-url = "2"
-tempfile = "3"
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }
-tokio-lsp-client = { git = "https://github.com/kviron/minerva-harness-tokio-lsp-client", rev = "71e08aa", version = "0.0.1" }
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 [dependencies.tokio]
 version = "1"
 features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"]
+
+[dev-dependencies]
+rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }
+rig-agent = { version = "0.46.0", default-features = false }
+tempfile = "3"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }

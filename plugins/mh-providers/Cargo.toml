@@ -1,0 +1,19 @@
+[package]
+name = "mh-providers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mh-runtime-support = { path = "../../crates/runtime-support" }
+mh-sessions = { path = "../mh-sessions" }
+mh-context = { path = "../mh-context" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+cordis-rs = "=0.11.1"
+rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }
+rig-agent = { version = "0.46.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ts-rs = { version = "=12.0.1", features = ["serde-json-impl"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util", "net"] }
+futures-util = "0.3"
+tempfile = "3"

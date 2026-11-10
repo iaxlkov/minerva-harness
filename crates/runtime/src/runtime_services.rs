@@ -1,73 +1,12 @@
-//! System plugins own session storage and supervised execution until fiber disposal.
-use crate::{plugins::PluginManager, run_supervisor::AgentLoopService, sessions::SessionService};
-use cordis::{Context, Plugin, Service};
-use std::{
-    convert::Infallible,
-    path::PathBuf,
-    sync::{Arc, Weak},
-    time::Duration,
-};
-
-impl Service for SessionService {
-    const NAME: &'static str = "studio.sessions";
-}
-
-pub(crate) struct SessionsPlugin(pub PathBuf);
-fn error(value: impl std::fmt::Display) -> std::io::Error {
-    std::io::Error::other(value.to_string())
-}
-impl Plugin for SessionsPlugin {
-    type Config = ();
-    type Input = ();
-    type PrepareError = Infallible;
-    type ApplyError = std::io::Error;
-    fn prepare(&self, _: ()) -> Result<(), Infallible> {
-        Ok(())
-    }
-    async fn apply(&self, ctx: Context, _: &()) -> Result<(), Self::ApplyError> {
-        let service = Arc::new(SessionService::open(&self.0).map_err(error)?);
-        let owned = service.clone();
-        let _cleanup = ctx
-            .effect(move || async move { owned.shutdown().map_err(error) })
-            .map_err(error)?;
-        let _publication = ctx.provide(service).map_err(error)?;
-        Ok(())
-    }
-}
-pub(crate) struct AgentLoopPlugin {
-    pub plugins: Weak<PluginManager>,
-    pub shutdown_timeout: Duration,
-}
-impl Plugin for AgentLoopPlugin {
-    type Config = ();
-    type Input = ();
-    type PrepareError = Infallible;
-    type ApplyError = std::io::Error;
-    fn prepare(&self, _: ()) -> Result<(), Infallible> {
-        Ok(())
-    }
-    async fn apply(&self, ctx: Context, _: &()) -> Result<(), Self::ApplyError> {
-        let sessions = ctx.try_service::<SessionService>().map_err(error)?;
-        ctx.try_service::<crate::tools::ToolRegistry>()
-            .map_err(error)?;
-        ctx.try_service::<crate::providers::ProviderService>()
-            .map_err(error)?;
-        let service = Arc::new(AgentLoopService::new(
-            sessions,
-            self.plugins.clone(),
-            self.shutdown_timeout,
-        ));
-        let owned = service.clone();
-        let _cleanup = ctx
-            .effect(move || async move {
-                owned.shutdown().await;
-                Ok::<_, std::io::Error>(())
-            })
-            .map_err(error)?;
-        let _publication = ctx.provide(service).map_err(error)?;
-        Ok(())
-    }
-}
+//! Runtime service integration tests.
+pub(crate) use mh_sessions::SessionsPlugin;
+pub(crate) use mh_agent_loop::AgentLoopPlugin;
+#[cfg(test)]
+use crate::sessions::SessionService;
+#[cfg(test)]
+use cordis::Context;
+#[cfg(test)]
+use std::{sync::Weak, time::Duration};
 
 #[cfg(test)]
 mod tests {

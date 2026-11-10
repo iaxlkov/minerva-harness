@@ -1,5 +1,5 @@
 import type {ShellNavigationProps,ShellSectionProps} from '../../../../packages/plugin-sdk/src/slots.types';
-import {workspacePlugin} from '../plugins/workspaces';
+import {workspacePlugin} from '../../../../plugins/mh-workspaces/ui';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
 import {BrowserPluginHost, type Scope, type SlotName, type SlotSelection, type BrowserPluginContext} from '../../../../packages/plugin-sdk/src/index.ts';

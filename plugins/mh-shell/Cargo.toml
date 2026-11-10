@@ -1,0 +1,12 @@
+[package]
+name = "mh-shell"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minerva-plugin-host = { path = "../../crates/plugin-host" }
+cordis-rs = "=0.11.1"
+serde = { version = "1", features = ["derive"] }
+ts-rs = { version = "=12.0.1", features = ["serde-json-impl"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"] }
+tempfile = "3"

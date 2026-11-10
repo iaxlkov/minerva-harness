@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/runtime", "crates/api", "crates/server-control", "crates/worker-auth", "crates/plugin-sdk", "crates/plugin-host", "crates/contracts", "crates/execution", "plugins/review-example/backend", "apps/server", "apps/worker", "apps/gateway", "apps/runner", "src-tauri"]
+members = ["crates/runtime", "crates/runtime-support", "crates/api", "crates/server-control", "crates/worker-auth", "crates/plugin-sdk", "crates/plugin-host", "crates/contracts", "crates/execution", "plugins/review-example/backend", "plugins/mh-lsp", "plugins/mh-lsp-rust", "plugins/mh-shell", "plugins/mh-tool-runtime", "plugins/mh-mcp", "plugins/mh-sessions", "plugins/mh-context", "plugins/mh-workspaces", "plugins/mh-providers", "plugins/mh-workspace-tools", "plugins/mh-plugin-manager", "plugins/mh-agent-loop", "apps/server", "apps/worker", "apps/gateway", "apps/runner", "src-tauri"]
 resolver = "2"
