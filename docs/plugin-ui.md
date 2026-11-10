@@ -116,7 +116,9 @@ ctx.slots.register('shell.sections', {
 | `shell.sidebar.header` | Под названием боковой панели |
 | `shell.sidebar.content` | После основной навигации раздела |
 | `shell.sidebar.footer` | Низ боковой панели |
-| `shell.header.actions` | Действия справа в заголовке |
+| `shell.header.actions` | Действия справа в шапке окна |
+| `message.actions` | Кнопки на панели сообщения при наведении (session scope, props `{role}`; внутри доступны хуки assistant-ui для текущего сообщения) |
+| `shell.titlebar.start` / `shell.titlebar.end` | Шапка окна: после кнопки меню / перед кнопками окна (индикаторы сервисов) |
 | `shell.content.before` / `shell.content.after` | До / после основного содержимого |
 
 В режиме разработки list-слоты `editor.tabs.start` и `editor.tabs.end`

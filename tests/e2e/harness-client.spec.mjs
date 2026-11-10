@@ -86,7 +86,7 @@ test('session controls preserve workspace and save execution settings and expose
  await page.getByLabel('Окно контекста (токены)').fill('16384');await page.getByLabel('Автоматически сжимать контекст').uncheck();
  await page.getByRole('button',{name:'Сохранить настройки сессии'}).click();await expect(page.getByRole('status')).toHaveText('Настройки сохранены.');
  expect(calls.find(([m])=>m==='workspace.save')[1]).toEqual({sessionId:'session-a',settings:{cwd:'D:\\fixture',permissionPolicy:'ask',contextWindow:16384,autoCompact:false}});
- await page.getByText('Доступные инструменты (1)').click();await expect(page.getByText('Read a file',{exact:false})).toBeVisible();
+ await expect(page.getByText('Доступные инструменты · 1')).toBeVisible();await expect(page.getByText('Read a file',{exact:false})).toBeVisible();
 });
 test('pending approvals and questions answer exact identities and survive a failed poll',async({page})=>{
  const calls=[];let failed=false,answered=new Set();

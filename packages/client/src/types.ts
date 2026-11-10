@@ -17,7 +17,7 @@ type Endpoint<P,R> = {params:P;result:R};
 type Empty = Record<string,never>;
 export interface Endpoints {
  'mh-editor.list':Endpoint<{sessionId:string;path?:string},{name:string;path:string;directory:boolean}[]>;
- 'mh-editor.read':Endpoint<{sessionId:string;path:string},{text:string;version:string}>;
+ 'mh-editor.read':Endpoint<{sessionId:string;path:string},{text:string;version:string;mimeType?:string;data?:string}>;
  'mh-editor.save':Endpoint<{sessionId:string;path:string;text:string;version:string},{version:string}>;
  'mh-lsp.open':Endpoint<{sessionId:string;path:string;version:number;text:string},string>;
  'mh-lsp.change':Endpoint<{sessionId:string;path:string;version:number;text:string},null>;

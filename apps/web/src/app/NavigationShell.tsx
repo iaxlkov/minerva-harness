@@ -13,9 +13,8 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { ScrollArea } from "../components/ui/scroll-area";
 import { Settings } from "../pages/settings/Settings";
-import { Plugins } from "../pages/plugins/Plugins";
+import { Plugins, PluginsNavigation, type PluginsPage } from "../pages/plugins/Plugins";
 import { UiSlot, useUiPlugins, workspaceScope } from "./plugins";
 import type {
   Provider,
@@ -48,6 +47,11 @@ import {
   TooltipContent,
 } from "../components/ui/tooltip";
 import { useIsMobile } from "../hooks/use-mobile";
+import { TitleBar } from "./TitleBar";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "../components/ui/dropdown-menu";
 import "./navigation-shell.css";
 
 function readPreference(key: string, fallback: number) {
@@ -62,6 +66,9 @@ function readPreference(key: string, fallback: number) {
 }
 const clamp = (value: number) =>
   Math.round(Math.max(192, Math.min(480, value)));
+// The editor keeps at least 360px next to the development-mode chat column.
+const clampChat = (value: number, total: number) =>
+  Math.round(Math.max(300, Math.min(total - 360, value)));
 export function NavigationShell({
   children,
   session,
@@ -88,6 +95,7 @@ export function NavigationShell({
   }, host.slots.getSnapshot);
   const [section, setSection] = useState("chat");
   const [tab, setTab] = useState("models");
+  const [pluginsPage, setPluginsPage] = useState<PluginsPage>("installed");
   const [width, setWidth] = useState(() =>
     clamp(readPreference("minerva.sidebar.width", 272)),
   );
@@ -98,6 +106,12 @@ export function NavigationShell({
   // Changing defaultSize re-registers the panel and interrupts an active drag.
   const initialPanelSize = useRef(collapsed ? 0 : width).current;
   const panel = useRef<PanelImperativeHandle | null>(null);
+  const [chatWidth, setChatWidth] = useState(() =>
+    readPreference("minerva.devchat.width", 420),
+  );
+  const mainRef = useRef<HTMLElement | null>(null);
+  const resizeChat = (width: number) =>
+    setChatWidth(clampChat(width, mainRef.current?.clientWidth ?? 1200));
   const isMobile = useIsMobile();
   useEffect(() => {
     panel.current?.resize(isMobile || collapsed ? 0 : width);
@@ -115,12 +129,13 @@ export function NavigationShell({
   useEffect(() => {
     try {
       localStorage.setItem("minerva.sidebar.width", String(width));
+      localStorage.setItem("minerva.devchat.width", String(chatWidth));
       localStorage.setItem(
         "minerva.sidebar.collapsed",
         String(Number(collapsed)),
       );
     } catch {}
-  }, [width, collapsed]);
+  }, [width, collapsed, chatWidth]);
   function navigate(next: string) {
     setSection(next);
     setMobileOpen(false);
@@ -234,21 +249,13 @@ export function NavigationShell({
         ) : section === "settings" ? (
           settings("navigation")
         ) : section === "plugins" ? (
-          <ScrollArea className="section-navigation">
-            <p className="section-description">
-              Управляйте возможностями Minerva и подключайте расширения.
-            </p>
-            <Button
-              variant="ghost"
-              className="nav-item selected"
-              aria-current="page"
-            >
-              Все плагины
-            </Button>
-            <p className="section-description">
-              Настройки подключённых плагинов доступны на странице настроек.
-            </p>
-          </ScrollArea>
+          <PluginsNavigation
+            page={pluginsPage}
+            onPage={(page) => {
+              setPluginsPage(page);
+              setMobileOpen(false);
+            }}
+          />
         ) : (
           sectionSlot("sidebar", section)
         )}
@@ -278,6 +285,71 @@ export function NavigationShell({
           className={`oe-studio app-shell navigation-shell ${collapsed ? "sidebar-collapsed" : ""} ${mobileOpen ? "sidebar-mobile-open" : ""}`}
           style={{ "--sidebar-width": `${width}px` } as React.CSSProperties}
         >
+          <TitleBar
+            menu={
+              <>
+                <DropdownMenuItem onSelect={() => { navigate("chat"); onNew(); }}>
+                  <Plus /> Новая сессия
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => navigate("chat")}>
+                  <Home /> Чаты
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate("plugins")}>
+                  <Puzzle /> Плагины
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate("settings")}>
+                  <SettingsIcon /> Настройки
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={toggle}>
+                  {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+                  {sidebarOpen ? "Скрыть боковую панель" : "Показать боковую панель"}
+                </DropdownMenuItem>
+              </>
+            }
+            start={
+              <UiSlot
+                slot="shell.titlebar.start"
+                scope={workspaceScope}
+                componentProps={slotProps}
+              />
+            }
+            end={
+              <UiSlot
+                slot="shell.titlebar.end"
+                scope={workspaceScope}
+                componentProps={slotProps}
+              />
+            }
+            title={
+              <strong>
+                {section === "chat" || section === "mh-editor"
+                  ? session.title
+                  : section === "settings"
+                    ? "Настройки"
+                    : section === "plugins"
+                      ? "Плагины"
+                      : sectionSlot("title", section)}
+              </strong>
+            }
+            sidebarOpen={sidebarOpen}
+            onSidebar={toggle}
+            actions={
+              <UiSlot
+                slot="shell.header.actions"
+                scope={workspaceScope}
+                componentProps={slotProps}
+              />
+            }
+            devMode={section === "mh-editor"}
+            onDevMode={
+              sections.some((entry) => entry.entryId === "mh-editor")
+                ? (on) => navigate(on ? "mh-editor" : "chat")
+                : undefined
+            }
+          />
+          <div className="shell-body">
           <nav className="activity-rail" aria-label="Разделы приложения">
             <img
               className="rail-logo"
@@ -293,7 +365,7 @@ export function NavigationShell({
             />
             {railButton("chat", "Чаты", Home)}
             {railButton("plugins", "Плагины", Puzzle)}
-            {sections.map((entry) => (
+            {sections.filter((entry) => entry.entryId !== "mh-editor").map((entry) => (
               <React.Fragment key={entry.entryId}>
                 {sectionSlot("rail", entry.entryId)}
               </React.Fragment>
@@ -365,41 +437,11 @@ export function NavigationShell({
               onDoubleClick={() => panel.current?.resize(272)}
             />
             <ResizablePanel id="shell-main-panel" minSize={isMobile ? 0 : 360}>
-              <main className={`main ${section === 'mh-editor' ? 'development-mode' : ''}`}>
-                {section !== 'mh-editor' && <header className="topbar">
-                  <div className="breadcrumbs">
-                    <span>
-                      {section === "chat"
-                        ? "Чаты"
-                        : section === "settings"
-                          ? "Настройки"
-                          : section === "plugins"
-                            ? "Плагины"
-                            : section === "mh-editor" ? "Проект" : "Расширения"}
-                    </span>
-                    <span className="crumb-separator">/</span>
-                    <strong>
-                      {section === "chat"
-                        ? session.title
-                        : section === "settings"
-                          ? ({
-                              models: "Модели",
-                              session: "Сессия",
-                              mcp: "Серверы MCP",
-                            }[tab] ?? "Параметры плагина")
-                          : section === "plugins"
-                            ? "Управление плагинами"
-                            : sectionSlot("title", section)}
-                    </strong>
-                  </div>
-                  <div className="shell-header-actions">
-                    <UiSlot
-                      slot="shell.header.actions"
-                      scope={workspaceScope}
-                      componentProps={slotProps}
-                    />
-                  </div>
-                </header>}
+              <main
+                ref={mainRef}
+                className={`main ${section === 'mh-editor' ? 'development-mode' : ''}`}
+                style={{ "--chat-width": `${chatWidth}px` } as React.CSSProperties}
+              >
                 <UiSlot
                   slot="shell.content.before"
                   scope={workspaceScope}
@@ -408,7 +450,34 @@ export function NavigationShell({
                 <div className="chat-view" hidden={section !== "chat" && section !== "mh-editor"}>
                   {children}
                 </div>
-                {section === "plugins" && <Plugins />}
+                {section === "mh-editor" && (
+                  <div
+                    className="chat-resize"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Ширина колонки чата"
+                    aria-valuenow={chatWidth}
+                    aria-valuemin={300}
+                    tabIndex={0}
+                    onPointerDown={(event) =>
+                      event.currentTarget.setPointerCapture(event.pointerId)
+                    }
+                    onPointerMove={(event) => {
+                      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                      const right = mainRef.current?.getBoundingClientRect().right ?? 0;
+                      resizeChat(right - event.clientX);
+                    }}
+                    onKeyDown={(event) => {
+                      const step = event.shiftKey ? 64 : 16;
+                      if (event.key === "ArrowLeft") resizeChat(chatWidth + step);
+                      else if (event.key === "ArrowRight") resizeChat(chatWidth - step);
+                      else return;
+                      event.preventDefault();
+                    }}
+                    onDoubleClick={() => resizeChat(420)}
+                  />
+                )}
+                {section === "plugins" && <Plugins page={pluginsPage} />}
                 {section === "settings" && (
                   <section className="settings-screen" aria-label="Настройки">
                     {settings("body")}
@@ -424,6 +493,7 @@ export function NavigationShell({
               </main>
             </ResizablePanel>
           </ResizablePanelGroup>
+          </div>
           <Sheet open={isMobile && mobileOpen} onOpenChange={setMobileOpen}>
             <SheetContent
               side="left"
