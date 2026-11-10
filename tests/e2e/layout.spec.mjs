@@ -26,7 +26,7 @@ export async function mount(page) {
   createBrowserComposition().then(host=>{window.disableSection=()=>host.disable('shell-fixture');window.enableSection=()=>host.activate([{id:'shell-fixture',apply(ctx){
    const scoped=ctx.scope({kind:'workspace',workspaceId:'default'});
    scoped.slots.register('shell.sections',{entryId:'fixture:reports',component:props=>props.placement==='title'?'Отчёты':props.placement==='rail'?<DropdownMenu><DropdownMenuTrigger className={'rail-button '+(props.selected?'selected':'')} aria-label="Отчёты">▦</DropdownMenuTrigger><DropdownMenuContent side="right"><DropdownMenuItem onSelect={()=>props.onNavigate('fixture:reports')}>Открыть отчёты</DropdownMenuItem></DropdownMenuContent></DropdownMenu>:props.placement==='sidebar'?<Button variant="ghost" className="nav-item">Мои отчёты</Button>:<section style={{padding:32}}><h1>Отчёты проекта</h1><Input aria-label="Фильтр отчётов"/></section>});
-   for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.content.before','shell.content.after'])scoped.slots.register(name,{entryId:'marker',component:()=> <span data-testid={name}>·</span>});
+   for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.titlebar.start','shell.titlebar.end','shell.content.before','shell.content.after'])scoped.slots.register(name,{entryId:'marker',component:()=> <span data-testid={name}>·</span>});
   }}]);createRoot(document.getElementById('root')).render(<PluginRoot host={host}><Chat session={session} sessions={Array.from({length:40},(_,index)=>({...session,id:String(index),title:"Session "+index}))} providers={[]} pluginModels={[]} model="" configured={false} activePlugins={[]} onSelect={()=>{}} onProviders={()=>{}} onNew={()=>{}} onSession={()=>{}} onSaved={()=>{}} onError={()=>{}}/></PluginRoot>);});
  `},bundle:true,format:'esm',write:false,loader:{'.css':'empty'}});
  const css=(await postcss([tailwind]).process(await readFile('apps/web/src/style.css','utf8'),{from:'apps/web/src/style.css'})).css+'\n'+await readFile('apps/web/src/harness/harness.css','utf8')+'\n'+await readFile('apps/web/src/app/navigation-shell.css','utf8');
@@ -81,9 +81,9 @@ for(const [width,height] of [[1280,800],[900,800],[700,800],[900,550]])test(`scr
  await checkOverflow('.settings-body');
  await page.screenshot({path:testInfo.outputPath('models.png')});
  await page.getByRole('button',{name:'Сессия',exact:true}).click();
- const checkbox=page.getByRole('checkbox',{name:'Автоматически сжимать контекст'});
+ const checkbox=page.getByRole('switch',{name:'Автоматически сжимать контекст'});
  await expect(checkbox).toBeVisible();
- expect((await checkbox.boundingBox()).width).toBeLessThan(24);
+ expect((await checkbox.boundingBox()).width).toBeLessThan(40);
  await checkOverflow('.settings-body');
  await page.screenshot({path:testInfo.outputPath('workspace.png')});
  await page.getByRole('button',{name:'Серверы MCP',exact:true}).click();
@@ -124,12 +124,12 @@ test('shell keeps draft, resizes, persists preferences and removes plugin sectio
  await page.getByRole('button',{name:'Свернуть боковую панель'}).click();await expect(sidebar).toBeHidden();
  await page.getByRole('button',{name:'Плагины',exact:true}).click();await expect(page.locator('.plugins-screen')).toBeVisible();
  await page.getByRole('button',{name:'Развернуть боковую панель'}).click();
- await expect(page.locator('.workspace-list')).toHaveCount(0);await expect(sidebar.getByText('Все плагины')).toBeVisible();
+ await expect(page.locator('.workspace-list')).toHaveCount(0);await expect(sidebar.getByText('Мои плагины')).toBeVisible();
  await page.getByRole('button',{name:'Настройки',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(sidebar.getByRole('button',{name:'Модели',exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Чаты',exact:true}).click();await expect(input).toHaveValue('Черновик для проверки переходов');
  await page.evaluate(()=>window.enableSection());await page.getByRole('button',{name:'Отчёты',exact:true}).click();await page.getByRole('menuitem',{name:'Открыть отчёты'}).click();
  await expect(sidebar.getByRole('button',{name:'Мои отчёты'})).toBeVisible();await expect(page.getByRole('heading',{name:'Отчёты проекта'})).toBeVisible();
- for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.content.before','shell.content.after'])await expect(page.getByTestId(name)).toBeVisible();
+ for(const name of ['shell.rail.start','shell.rail.end','shell.sidebar.header','shell.sidebar.content','shell.sidebar.footer','shell.header.actions','shell.titlebar.start','shell.titlebar.end','shell.content.before','shell.content.after'])await expect(page.getByTestId(name)).toBeVisible();
  await page.screenshot({path:testInfo.outputPath('plugin-section.png')});
  await page.evaluate(()=>window.disableSection());await expect(page.getByRole('button',{name:'Отчёты',exact:true})).toHaveCount(0);await expect(input).toHaveValue('Черновик для проверки переходов');
  await page.getByRole('button',{name:'Свернуть боковую панель'}).click();await page.reload();await expect(sidebar).toBeHidden();

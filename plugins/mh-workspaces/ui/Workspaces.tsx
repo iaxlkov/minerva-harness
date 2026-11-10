@@ -39,7 +39,7 @@ export function Workspaces(props:AppSlotProps['navigation.items']) {
   }catch(error){setError(String(error));}finally{setBusy(false);}
  }
  return <section className="workspaces" aria-label="Рабочие пространства">
-  <div className="workspaces-heading"><span>Workspaces</span><Button variant="ghost" size="icon" title="Создать workspace" aria-label="Создать workspace" disabled={disabled||busy} onClick={()=>void add()}><FolderPlus size={16}/></Button></div>
+  <div className="workspaces-heading"><span>Рабочие пространства</span><Button variant="ghost" size="icon" title="Создать workspace" aria-label="Создать workspace" disabled={disabled||busy} onClick={()=>void add()}><FolderPlus size={16}/></Button></div>
   {error&&<p className="workspace-error" role="alert">{error}</p>}
   <ScrollArea className="workspace-list" aria-label="История диалогов">
    {workspaces.map(workspace=>{
@@ -51,7 +51,7 @@ export function Workspaces(props:AppSlotProps['navigation.items']) {
       <Button variant="ghost" size="icon-sm" title={`Новый диалог — ${title}`} aria-label={`Новый диалог — ${title}`} disabled={disabled||busy||workspace.missing} onClick={()=>{setCollapsed(current=>{const next=new Set(current);next.delete(workspace.id);return next;});onNew(workspace.id);}}><Plus size={14}/></Button>
      </WorkspaceMenu>
      {workspace.missing&&<p className="workspace-error">Папка недоступна</p>}
-     {open&&<div className="workspace-sessions">{sessions.filter(item=>workspace.sessionIds.includes(item.id)&&((workspace.archivedSessionIds??[]).includes(item.id)===showArchived)&&(showArchived||item.id===session.id||item.hasMessages!==false||(workspace.pinnedSessionIds??[]).includes(item.id))).sort((a,b)=>Number((workspace.pinnedSessionIds??[]).includes(b.id))-Number((workspace.pinnedSessionIds??[]).includes(a.id))).map(item=><SessionMenu key={item.id} session={item} workspaceId={workspace.id} pinned={(workspace.pinnedSessionIds??[]).includes(item.id)} archived={(workspace.archivedSessionIds??[]).includes(item.id)} disabled={disabled||busy} selected={item.id===session.id} onSelect={onSession} onArchived={()=>{if(item.id===session.id)onNew(workspace.id);}}/>)}</div>}
+     {open&&(()=>{const items=sessions.filter(item=>workspace.sessionIds.includes(item.id)&&((workspace.archivedSessionIds??[]).includes(item.id)===showArchived)&&(showArchived||item.id===session.id||item.hasMessages!==false||(workspace.pinnedSessionIds??[]).includes(item.id))).sort((a,b)=>Number((workspace.pinnedSessionIds??[]).includes(b.id))-Number((workspace.pinnedSessionIds??[]).includes(a.id)));return <div className="workspace-sessions">{items.length?items.map(item=><SessionMenu key={item.id} session={item} workspaceId={workspace.id} pinned={(workspace.pinnedSessionIds??[]).includes(item.id)} archived={(workspace.archivedSessionIds??[]).includes(item.id)} disabled={disabled||busy} selected={item.id===session.id} onSelect={onSession} onArchived={()=>{if(item.id===session.id)onNew(workspace.id);}}/>):<p className="workspace-empty">{showArchived?'В архиве пусто':'Пока нет диалогов'}</p>}</div>;})()}
     </div>;
    })}
   </ScrollArea>

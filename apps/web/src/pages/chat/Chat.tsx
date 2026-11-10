@@ -6,7 +6,9 @@ import {SessionControls} from '../../harness/SessionControls';
 import {SessionFile} from '../../harness/SessionFile';
 import {SessionImage} from '../../harness/SessionImage';
 import {attachmentAdapter} from '../../harness/attachments';
-import {AttachmentPrimitive} from '@assistant-ui/react';
+import {AttachmentPrimitive,ActionBarPrimitive} from '@assistant-ui/react';
+import {Check,Copy} from 'lucide-react';
+import {Tooltip,TooltipContent,TooltipTrigger} from '../../components/ui/tooltip';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '../../client.ts';
 import {
@@ -34,7 +36,14 @@ function Message({ role }: { role: 'user' | 'assistant' }) {
   const scope=React.useContext(SessionScopeContext);
   const standard=<MessagePrimitive.Parts components={{Image:HistoryImage,File:HistoryFile,tools:{Fallback:PluginTool},data:{Fallback:({data})=><details className="tool-history"><summary>Событие провайдера</summary><ScrollArea asChild><pre>{JSON.stringify(data,null,2)}</pre></ScrollArea></details>},Reasoning:({text})=><details className="message-reasoning"><summary>Сводка рассуждений</summary><div>{text}</div></details>}}/>;
   return <MessagePrimitive.Root className={`message ${role}`} data-role={role}>
+    <div className="message-body">
     <div className="message-content"><div className="message-text"><UiSlot slot="message.renderers" scope={scope} entryId={role} componentProps={{children:standard}} fallback={standard}/><AuiIf condition={s=>s.message.status?.type==='incomplete'}><div className="message-interrupted">Ход не завершён. Сохранённые действия показаны выше.</div></AuiIf></div></div>
+    {/* The row keeps its height so hover-revealed actions do not shift the thread. */}
+    <div className="message-actions-row"><ActionBarPrimitive.Root hideWhenRunning autohide="always" className="message-actions" aria-label="Действия с сообщением">
+      <Tooltip><TooltipTrigger asChild><ActionBarPrimitive.Copy asChild copiedDuration={2000}><Button variant="ghost" size="icon-sm" className="message-action" aria-label="Копировать сообщение"><Copy className="message-copy-idle"/><Check className="message-copy-done"/></Button></ActionBarPrimitive.Copy></TooltipTrigger><TooltipContent className="oe-studio">Копировать</TooltipContent></Tooltip>
+      <UiSlot slot="message.actions" scope={scope} componentProps={{role}}/>
+    </ActionBarPrimitive.Root></div>
+    </div>
   </MessagePrimitive.Root>;
 }
 
@@ -74,6 +83,7 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
         </ComposerToolbar>
         </ComposerBar>
       </ComposerPrimitive.Root>
+      {!configured&&<p className="composer-hint">Модель не настроена: выберите её в списке или добавьте провайдера в разделе «Настройки → Модели».</p>}
       {remoteRunning&&<AuiIf condition={state=>!state.thread.isRunning}><div role="status">Задача выполняется на сервере…</div></AuiIf>}
     </div>
   </ThreadPrimitive.Root>;

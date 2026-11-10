@@ -41,7 +41,7 @@ test('polled crash removes external settings and exposes retry and disable actio
  await page.getByRole('button',{name:'Отключить автозапуск'}).click();
  expect(await page.evaluate(()=>window.toggles.at(-1))).toEqual({id:'fixture',enabled:false});
  await expect(page.getByRole('alert')).toHaveText('process exited');
- await page.getByRole('button',{name:'Повторить запуск'}).click();
+ await page.locator('.plugin-row').filter({has:page.getByRole('alert')}).getByRole('switch').click();
  await expect(page.getByRole('alert')).toHaveCount(0);
  await expect(page.locator('.plugin-status')).toHaveText('Работает');
  await page.evaluate(()=>{window.failTransport=true;});

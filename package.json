@@ -22,6 +22,7 @@
     "@radix-ui/react-select": "^2.4.1",
     "@radix-ui/react-separator": "^1.2.0",
     "@radix-ui/react-slot": "^1.5.0",
+    "@radix-ui/react-switch": "^1.4.1",
     "@radix-ui/react-tooltip": "^1.4.1",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.8.4",

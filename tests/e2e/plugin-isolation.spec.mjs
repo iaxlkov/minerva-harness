@@ -61,8 +61,8 @@ test('Host isolates broken packages, slow calls and bad catalogues; UI follows c
     await page.getByRole('button',{name:'Плагины',exact:true}).click();
     const row=page.locator('.plugin-row').filter({hasText:'healthy'});
     await expect(row.getByRole('alert')).toBeVisible();
-    await row.getByRole('button',{name:'Повторить запуск'}).click();
-    await expect(row.getByRole('button',{name:'Отключить',exact:true})).toBeVisible();
+    await row.getByRole('switch').click();
+    await expect(row.getByRole('switch')).toBeChecked();
     await rpc('set_plugin_enabled',{id:'slow',enabled:false});
     const master=page.getByRole('switch',{name:'Несистемные плагины'});
     await expect(master).toBeChecked();

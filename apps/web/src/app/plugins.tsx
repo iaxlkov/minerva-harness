@@ -33,6 +33,8 @@ export interface AppSlotProps {
  'shell.sidebar.footer':ShellSlotProps;
  'shell.sidebar.content':ShellSlotProps;
  'shell.header.actions':ShellSlotProps;
+ 'shell.titlebar.start':ShellSlotProps;
+ 'shell.titlebar.end':ShellSlotProps;
  'shell.content.before':ShellSlotProps;
  'shell.content.after':ShellSlotProps;
  'editor.tabs.start':EditorTabsSlotProps;
@@ -46,6 +48,7 @@ export interface AppSlotProps {
  'composer.menu':{sessionId:string;disabled:boolean;onClose:()=>void};
  'tool.renderers':ToolCallMessagePartProps;
  'message.renderers':{children:ReactNode};
+ 'message.actions':{role:'user'|'assistant'};
  'workspace.panels':{session:SessionInfo};
  'workspace.menu':{workspace:WorkspaceInfo;disabled:boolean;onClose:()=>void;onAction:(action:'rename'|'remove')=>void};
  'contextMenu.icon':{icon:{key:string;src?:string}};

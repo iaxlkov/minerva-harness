@@ -1,0 +1,16 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Minerva Harness",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 700,
+        "minHeight": 550,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  }
+}
