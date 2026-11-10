@@ -145,6 +145,7 @@ impl Host {
             .chain(composition.plugins.keys().filter(|id| {
                 id.as_str() != "example"
                     && !minerva_plugin_sdk::SYSTEM_PLUGIN_IDS.contains(&id.as_str())
+                    && !minerva_plugin_sdk::OPTIONAL_HOST_PLUGIN_IDS.contains(&id.as_str())
             }))
         {
             entries.entry(id.clone()).or_insert_with(|| Entry {

@@ -37,7 +37,9 @@ async fn failed_plugin_configuration_releases_database_for_retry() {
     let runtime = Runtime::start(cfg).await.unwrap();
     assert_eq!(
         runtime.plugins.list().await.unwrap().len(),
-        minerva_plugin_sdk::SYSTEM_PLUGIN_IDS.len() + 1
+        minerva_plugin_sdk::SYSTEM_PLUGIN_IDS.len()
+            + minerva_plugin_sdk::OPTIONAL_HOST_PLUGIN_IDS.len()
+            + 1
     );
     runtime.shutdown().await.unwrap();
     assert!(runtime.plugins.shell().is_err());

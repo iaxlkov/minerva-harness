@@ -49,16 +49,16 @@ impl Plugin for ExamplePlugin {
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginInfo {
-    id: String,
-    name: String,
-    description: String,
-    enabled: bool,
-    requested_enabled: bool,
-    optional_enabled: bool,
-    can_toggle: bool,
-    origin: String,
-    has_ui: bool,
-    error: Option<String>,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub requested_enabled: bool,
+    pub optional_enabled: bool,
+    pub can_toggle: bool,
+    pub origin: String,
+    pub has_ui: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -71,6 +71,7 @@ pub struct PluginModel {
 }
 
 struct ManagerService {
+    optional_plugins: std::sync::Mutex<Option<Arc<dyn crate::optional::OptionalPlugins>>>,
     harness: Arc<crate::harness::Harness>,
     context: Context,
     lifecycle: Mutex<()>,
@@ -91,6 +92,9 @@ impl Service for ManagerService {
 }
 
 impl ManagerService {
+    fn optional(&self) -> Option<Arc<dyn crate::optional::OptionalPlugins>> {
+        self.optional_plugins.lock().ok().and_then(|v| v.clone())
+    }
     async fn sync_lsp(&self) {
         let _guard = self.lsp_updates.lock().await;
         let Ok(lsp) = self.context.try_service::<crate::lsp::LspService>() else { return; };
@@ -176,7 +180,7 @@ impl ManagerService {
             has_ui: false,
             error: None,
         });
-        roster.extend(self.external.roster().into_iter().map(|entry| {
+        roster.extend(self.external.roster().into_iter().filter(|entry| !self.optional().is_some_and(|p|p.owns(&entry.id))).map(|entry| {
             if !entry.enabled {
                 self.harness
                     .tools
@@ -202,6 +206,7 @@ impl ManagerService {
                 error: entry.error.or_else(|| tool_errors.get(&entry.id).cloned()).or_else(|| lsp_errors.get(&entry.id).cloned()),
             }
         }));
+        if let Some(optional) = self.optional() { roster.extend(optional.list()); }
         roster
     }
     async fn set_enabled(&self, id: &str, enabled: bool) -> Result<Vec<PluginInfo>, String> {
@@ -211,6 +216,10 @@ impl ManagerService {
         }
         if builtin::SYSTEM.iter().any(|plugin| plugin.id == id) {
             return Err("System plugins cannot be toggled".into());
+        }
+        if let Some(optional) = self.optional().filter(|p| p.owns(id)) {
+            optional.set_enabled(id, enabled).await?;
+            return Ok(self.list().await);
         }
         if id != "example" {
             if !enabled
@@ -250,6 +259,7 @@ impl ManagerService {
             .await;
         external?;
         example?;
+        if let Some(optional) = self.optional() { optional.set_optional_enabled(enabled).await?; }
         self.sync_lsp().await;
         Ok(self.list().await)
     }
@@ -272,6 +282,7 @@ impl ManagerService {
         self.closing.store(true, Ordering::SeqCst);
         self.harness.tools.revoke_owner(images::OWNER);
         let _lifecycle = self.lifecycle.lock().await;
+        if let Some(optional) = self.optional() { let _ = optional.shutdown().await; }
         self.external.shutdown().await;
         if let Some(handle) = self.example.lock().await.take() {
             let _ = handle.dispose().await;
@@ -361,6 +372,7 @@ impl PluginManager {
         let example_events = Arc::new(AtomicUsize::new(0));
         images::register(&harness.tools, external.clone(), harness.context.clone())?;
         let service = Arc::new(ManagerService {
+            optional_plugins: std::sync::Mutex::new(None),
             harness: harness.clone(),
             context: context.clone(),
             lifecycle: Mutex::new(()),
@@ -478,6 +490,14 @@ impl PluginManager {
     pub async fn list(&self) -> Result<Vec<PluginInfo>, String> {
         Ok(self.service()?.list().await)
     }
+    pub fn attach_optional(&self, plugins: Arc<dyn crate::optional::OptionalPlugins>) -> Result<(), String> {
+        let service = self.service()?;
+        let mut slot = service.optional_plugins.lock().map_err(|_| "optional plugin registry unavailable")?;
+        if slot.is_some() { return Err("optional plugins already attached".into()); }
+        if service.external.roster().iter().any(|p| p.manifest.is_some() && plugins.owns(&p.id)) { return Err("installed package conflicts with host plugin id".into()); }
+        *slot = Some(plugins);
+        Ok(())
+    }
     pub async fn set_enabled(&self, id: &str, enabled: bool) -> Result<Vec<PluginInfo>, String> {
         let service = self.service()?;
         let id = id.to_owned();
@@ -498,6 +518,9 @@ impl PluginManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        if let Some(optional) = self.service()?.optional().filter(|p| p.owns(id)) {
+            return optional.call(id, method, params).await;
+        }
         if method.starts_with("engine.") || (method.starts_with("tools.") && method != "tools.list")
         {
             return Err("Engine methods require a supervised run".into());

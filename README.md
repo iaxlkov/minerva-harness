@@ -97,7 +97,7 @@ Rust требует доступного MSVC linker (например, Develope
 
 ## Данные и ограничения
 
-Идентификатор приложения сохранён как `ru.oestudio.rig.prototype` для совместимости с данными прототипа. В Windows desktop-история расположена в `%APPDATA%\ru.oestudio.rig.prototype\sessions.sqlite3`. При открытии v1–v4 создаётся согласованная SQLite backup-копия `*.pre-v5-*.sqlite3`, затем выполняется миграция на v5 с журналом событий. Если backup не создан, обновление прекращается. Старые бинарники не открывают новую схему; для отката нужна резервная копия. Рабочая БД не используется тестами.
+Идентификатор приложения сохранён как `ru.oestudio.rig.prototype` для совместимости с данными прототипа. В Windows desktop-история расположена в `%APPDATA%\ru.oestudio.rig.prototype\sessions.sqlite3`. Текущая схема — v6 с журналом событий и внутренними сессиями экспериментов. Перед миграцией v1–v4 создаётся SQLite backup `*.pre-v5-*.sqlite3`, перед v5→v6 — `*.pre-v6-*.sqlite3`. Если backup не создан, обновление прекращается. Старые бинарники не открывают новую схему; для отката нужна резервная копия. Рабочая БД не используется тестами.
 
 API-ключи хранятся в Windows Credential Manager. Данные, ключи, сборки и диагностические файлы не входят в репозиторий.
 
@@ -110,4 +110,5 @@ Desktop создаёт файл в `%APPDATA%\ru.oestudio.rig.prototype`; сущ
 План аудита и следующие этапы: [docs/core-refactoring-plan.md](docs/core-refactoring-plan.md).
 
 Harness execution, tools, approvals, MCP and context: [usage and limits](docs/harness.md).
+Память, поиск истории, версии навыков и Propose–Probe–Compose: [локальный контур обучения](docs/harness-learning.md).
 External Codex source: [kviron/minerva-codex-plugin](https://github.com/kviron/minerva-codex-plugin) (separate private repository).

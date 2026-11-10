@@ -36,6 +36,7 @@ impl Plugin for WorkspaceToolsPlugin {
                 owned.revoke_owner("native.workspace");
                 owned.revoke_owner("native.interaction");
                 owned.revoke_owner("native.attachments");
+                owned.revoke_owner("native.skills");
             })
             .map_err(apply_error)?;
         crate::register_native(&tools).map_err(apply_error)?;
@@ -61,7 +62,7 @@ impl Plugin for WorkspaceToolsPlugin {
                 })
             }).map_err(apply_error)?;
         }
-        tools.register("native.workspace", crate::tools::ToolDefinition {
+        tools.register("native.skills", crate::tools::ToolDefinition {
             name: "load_skill".into(),
             description: "Load the instructions of an available workspace skill by name".into(),
             input_schema: json!({"type":"object","properties":{"name":{"type":"string","minLength":1}},"required":["name"],"additionalProperties":false}),

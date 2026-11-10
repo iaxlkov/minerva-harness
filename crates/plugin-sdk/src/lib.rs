@@ -1,5 +1,9 @@
 //! Version one wire contracts. Native local plugins are trusted executable code.
 pub mod context;
+pub mod learning;
+pub mod history;
+pub mod experience;
+pub mod skills;
 pub mod engine;
 pub mod mcp;
 pub mod tools;
@@ -27,6 +31,10 @@ pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "mcp",
     "sessions",
     "agent-loop",
+];
+/// Reserved host modules that remain individually optional.
+pub const OPTIONAL_HOST_PLUGIN_IDS: &[&str] = &[
+    "session-query", "skills", "memory", "experience", "experiments", "improvement", "skill-curation",
 ];
 /// Static declaration of a language server contributed by a trusted local plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,7 +167,7 @@ impl Manifest {
         {
             return Err("invalid plugin id".into());
         }
-        if self.id == "example" || SYSTEM_PLUGIN_IDS.contains(&self.id.as_str()) {
+        if self.id == "example" || SYSTEM_PLUGIN_IDS.contains(&self.id.as_str()) || OPTIONAL_HOST_PLUGIN_IDS.contains(&self.id.as_str()) {
             return Err("plugin id is reserved for a builtin".into());
         }
         if self.version.is_empty() || self.version.len() > 100 {

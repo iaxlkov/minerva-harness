@@ -15,6 +15,12 @@ pub use run_supervisor::{RunHandle, RunMessage, RunSnapshot, StartRunRequest};
 pub mod context;
 pub mod harness;
 mod harness_api;
+mod learning;
+mod learning_history;
+mod learning_execution;
+mod learning_skills;
+mod learning_experience;
+mod learning_curation;
 pub mod mcp;
 pub mod lsp;
 pub mod session_store;
@@ -49,6 +55,7 @@ impl std::fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 pub struct Runtime {
+    learning: Arc<learning::Learning>,
     config: RuntimeConfig,
     pub sessions: Arc<SessionService>,
     pub plugins: Arc<PluginManager>,
@@ -79,6 +86,7 @@ impl Runtime {
         let composition = minerva_plugin_host::config::ConfigStore::open(&config.config_dir)
             .and_then(|store| store.snapshot())
             .map_err(RuntimeError::Configuration)?;
+        let ownership = learning::Learning::acquire_ownership(&config).map_err(RuntimeError::Bootstrap)?;
         let plugins = Arc::new(
             PluginManager::start_scoped_at(
                 config.config_dir.join("shell.json"),
@@ -151,7 +159,10 @@ impl Runtime {
                 return Err(error);
             }
         };
+        let learning = learning::Learning::open(&config, &plugins, sessions.clone(), ownership).await.map_err(RuntimeError::Bootstrap)?;
+        plugins.attach_optional(learning.clone()).map_err(RuntimeError::Bootstrap)?;
         Ok(Self {
+            learning,
             config,
             sessions,
             plugins,
@@ -166,6 +177,9 @@ impl Runtime {
             return Ok(());
         }
         let mut failure = None;
+        if let Err(error) = mh_plugin_manager::optional::OptionalPlugins::shutdown(self.learning.as_ref()).await {
+            failure = Some(RuntimeError::Lifecycle(error));
+        }
         for fiber in self.fibers.iter().rev() {
             if let Err(error) = fiber.dispose().await {
                 failure.get_or_insert_with(|| RuntimeError::Lifecycle(error.to_string()));

@@ -2,6 +2,8 @@
 pub use mh_sessions::{sessions, transcript};
 pub use mh_tool_runtime as tools;
 mod files;
+pub mod contributions;
+pub mod skill_provider;
 mod images;
 use crate::sessions::{SessionMessage, Turn};
 pub use minerva_plugin_sdk::context::*;
@@ -14,6 +16,9 @@ use std::{
 
 pub struct ContextService {
     db: Mutex<Connection>,
+    pub contributions: contributions::ContributionRegistry,
+    learning_actor: std::sync::RwLock<Option<String>>,
+    skill_projection: std::sync::RwLock<Option<std::sync::Arc<dyn skill_provider::SkillProjection>>>,
 }
 impl cordis::Service for ContextService {
     const NAME: &'static str = "studio.context";
@@ -27,6 +32,34 @@ pub struct PreparedContext {
 }
 
 impl ContextService {
+    pub fn set_skill_projection(&self, provider: std::sync::Arc<dyn skill_provider::SkillProjection>) -> Result<(), String> { *self.skill_projection.write().map_err(|_| "skill projection unavailable")? = Some(provider); Ok(()) }
+    pub fn set_learning_actor(&self, actor: String) -> Result<(), String> {
+        if actor.is_empty() { return Err("empty learning actor".into()); }
+        *self.learning_actor.write().map_err(|_| "context identity unavailable")? = Some(actor);
+        Ok(())
+    }
+    pub async fn prepare_enriched(&self, session: &str, messages: &[SessionMessage]) -> Result<PreparedContext, String> {
+        let mut prepared = self.prepare(session, messages)?;
+        if self.frozen_context(session)?.is_some() { return Ok(prepared); }
+        let original_tokens = estimate_tokens(&prepared.system_prompt);
+        let actor = self.learning_actor.read().map_err(|_| "context identity unavailable")?.clone();
+        if let Some(actor_id) = actor {
+            let workspace_id = self.db()?.query_row("SELECT project FROM project_sessions WHERE session=?1", [session], |r|r.get::<_,String>(0)).optional().map_err(|e|e.to_string())?;
+            let access = minerva_plugin_sdk::learning::AccessContext { actor_id, session_id:session.into(), workspace_id, allow_user_scope:true };
+            let query=messages.iter().rev().find(|m|m.role=="user").map(|m|m.parts.iter().filter(|p|p.kind=="text").filter_map(|p|p.data["text"].as_str()).collect::<String>()).unwrap_or_default();
+            let snapshot = self.contributions.snapshot_for_query(&access, &query, prepared.budget.available_tokens.saturating_sub(256).min(4096)).await;
+            for section in snapshot.sections {
+                prepared.system_prompt.push_str(&format!("\nReference context from {} at revision {}:\n{}\n",section.provider_id,section.revision,section.text));
+            }
+            if !snapshot.degraded.is_empty() {
+                prepared.system_prompt.push_str("\nSome optional reference providers are unavailable. Do not assume memory is complete.\n");
+            }
+            let extra = estimate_tokens(&prepared.system_prompt).saturating_sub(original_tokens);
+            prepared.budget.estimated_tokens = prepared.budget.estimated_tokens.saturating_add(extra);
+            prepared.budget.available_tokens = prepared.budget.available_tokens.saturating_sub(extra);
+        }
+        Ok(prepared)
+    }
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -40,9 +73,10 @@ impl ContextService {
             CREATE TABLE IF NOT EXISTS image_generator_choice (session TEXT PRIMARY KEY, generator TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS summaries (session TEXT PRIMARY KEY, prefix TEXT NOT NULL, summary TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, session TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL);").map_err(|e|e.to_string())?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS frozen_context(session TEXT PRIMARY KEY, prompt TEXT NOT NULL);").map_err(|e|e.to_string())?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS attachment_access(session TEXT NOT NULL,attachment TEXT NOT NULL REFERENCES attachments(id),PRIMARY KEY(session,attachment));").map_err(|e|e.to_string())?;
         migrate(&db)?;
-        Ok(Self { db: Mutex::new(db) })
+        Ok(Self { db: Mutex::new(db), contributions: contributions::ContributionRegistry::default(), learning_actor: std::sync::RwLock::new(None), skill_projection: std::sync::RwLock::new(None) })
     }
     pub fn db(&self) -> Result<MutexGuard<'_, Connection>, String> {
         self.db
@@ -114,6 +148,12 @@ impl ContextService {
         if !files::valid_skill_name(name) {
             return Err("invalid skill name".into());
         }
+        let projection = self.skill_projection.read().map_err(|_| "skill projection unavailable")?.clone();
+        if let Some(projection) = projection {
+            let text = projection.load(session, name, false)?;
+            self.db()?.execute("INSERT OR IGNORE INTO selected_skills VALUES (?1,?2)", params![session,name]).map_err(|e| e.to_string())?;
+            return Ok(text);
+        }
         let settings = self.workspace_get(session)?;
         let cwd = settings
             .cwd
@@ -133,21 +173,33 @@ impl ContextService {
             .map_err(|e| e.to_string())?;
         Ok(text)
     }
+    /// Host-owned immutable context for isolated child sessions.
+    pub fn freeze_context(&self, session: &str, prompt: &str) -> Result<(), String> {
+        valid_id(session)?;
+        if prompt.is_empty() || prompt.len() > files::MAX_TOTAL { return Err("invalid frozen context".into()); }
+        self.db()?.execute("INSERT INTO frozen_context VALUES (?1,?2)",params![session,prompt]).map_err(|e|e.to_string())?;
+        Ok(())
+    }
+    fn frozen_context(&self, session: &str) -> Result<Option<String>, String> {
+        self.db()?.query_row("SELECT prompt FROM frozen_context WHERE session=?1",[session],|r|r.get(0)).optional().map_err(|e|e.to_string())
+    }
     pub fn prepare(
         &self,
         session: &str,
         messages: &[SessionMessage],
     ) -> Result<PreparedContext, String> {
         let settings = self.workspace_get(session)?;
-        let mut system_prompt="You are Minerva, a helpful assistant. Follow the user request and use the available tools when needed.".to_owned();
+        let frozen = self.frozen_context(session)?;
+        let mut system_prompt=frozen.clone().unwrap_or_else(|| "You are Minerva, a helpful assistant. Follow the user request and use the available tools when needed.".to_owned());
         let mut skills = Vec::new();
+        if frozen.is_none() {
         if let Some(cwd) = settings.cwd.as_deref() {
             system_prompt.push_str(&format!(
                 "\nWorkspace cwd: {cwd}\nPermission policy: {:?}\n",
                 settings.permission_policy
             ));
             system_prompt.push_str(&files::instructions(Path::new(cwd))?);
-            let discovered = files::discover_skills(Path::new(cwd))?;
+            let discovered = if self.skill_projection.read().map_err(|_| "skill projection unavailable")?.is_some() { Vec::new() } else { files::discover_skills(Path::new(cwd))? };
             let selected: Vec<String> = {
                 let db = self.db()?;
                 let mut stmt = db
@@ -177,6 +229,17 @@ impl ContextService {
                 }
                 skills.push(skill.info);
             }
+        }
+        let projection = self.skill_projection.read().map_err(|_| "skill projection unavailable")?.clone();
+        if let Some(projection) = projection {
+            let selected: Vec<String> = { let db = self.db()?; let mut stmt = db.prepare("SELECT name FROM selected_skills WHERE session=?1 ORDER BY name").map_err(|e|e.to_string())?; let rows = stmt.query_map([session], |r| r.get(0)).map_err(|e|e.to_string())?; rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())? };
+            let mut remaining = files::MAX_TOTAL;
+            for info in projection.list(session)? {
+                system_prompt.push_str(&format!("\nAvailable skill {}: {}\n", info.name, info.description));
+                if selected.contains(&info.name) { let body = projection.load(session, &info.name, true)?; if body.len() > remaining { return Err("loaded skills exceed context byte limit".into()); } remaining -= body.len(); system_prompt.push_str(&format!("\nLoaded skill {}:\n{}\n", info.name, body)); }
+                skills.push(info);
+            }
+        }
         }
         let mut start = 0;
         let saved: Option<(String, String)> = self
@@ -219,7 +282,7 @@ impl ContextService {
             for part in &mut turn.parts {
                 if part.kind == "file" {
                     let stored = self.get_attachment(session, part.data["id"].as_str().ok_or("Invalid file reference")?)?;
-                    *part = crate::transcript::ContentPart::text("text", &format!(
+                    *part = crate::transcript::ContentPart::text("text", format!(
                         "Attached file: {} ({} bytes, {}). Use read_attachment with id {} to read it on demand; binary chunks are base64. Use save_attachment to copy it to the workspace for processing with file tools.",
                         serde_json::to_string(&stored.name).map_err(|e|e.to_string())?, stored.bytes, stored.mime_type, stored.id
                     ));
@@ -537,5 +600,36 @@ impl cordis::Plugin for ContextPlugin {
     async fn apply(&self, ctx: cordis::Context, _: &()) -> Result<(), Self::ApplyError> {
         let _context = ctx.provide(self.0.clone())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod skill_projection_tests {
+    use super::*;
+    use std::sync::Arc;
+    struct Provider;
+    impl skill_provider::SkillProjection for Provider {
+        fn list(&self, _: &str) -> Result<Vec<SkillInfo>, String> { Ok(vec![SkillInfo{name:"example".into(),description:"test".into()}]) }
+        fn load(&self, _: &str, name: &str, _: bool) -> Result<String,String> { if name == "example" { Ok("projected body".into()) } else { Err("missing".into()) } }
+    }
+    #[test]
+    fn selected_skill_is_projected_without_workspace() {
+        let dir=tempfile::tempdir().unwrap(); let context=ContextService::open(&dir.path().join("ctx.sqlite")).unwrap();
+        context.set_skill_projection(Arc::new(Provider)).unwrap();
+        assert_eq!(context.load_skill("s","example").unwrap(),"projected body");
+        let prepared=context.prepare("s",&[]).unwrap();
+        assert!(prepared.system_prompt.contains("projected body"));
+        assert_eq!(prepared.skills[0].name,"example");
+    }
+}
+#[cfg(test)]
+mod frozen_context_tests {
+    use super::*;
+    #[tokio::test]
+    async fn frozen_context_is_immutable_and_skips_live_contributions() {
+        let d=tempfile::tempdir().unwrap();let service=ContextService::open(&d.path().join("db")).unwrap();
+        service.freeze_context("child","immutable baseline").unwrap();
+        assert!(service.freeze_context("child","overwrite").is_err());
+        assert_eq!(service.prepare_enriched("child",&[]).await.unwrap().system_prompt,"immutable baseline");
     }
 }

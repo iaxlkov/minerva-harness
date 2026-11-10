@@ -150,6 +150,11 @@ impl SessionService {
         }
         self.store.create(id)
     }
+    /// Host-only creation for child jobs; not exposed as a user session API.
+    pub fn create_internal(&self, id: &str, purpose: &str, parent_job: &str) -> Result<(), String> {
+        if !valid_id(id) || purpose.trim().is_empty() || purpose.len()>256 || parent_job.trim().is_empty() || parent_job.len()>256 || purpose.chars().any(char::is_control) || parent_job.chars().any(char::is_control) {return Err("Invalid internal session metadata".into());}
+        self.store.create_internal(id,purpose,parent_job)
+    }
     pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
         self.store.list()
     }
@@ -534,7 +539,7 @@ mod tests {
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
     }
     #[test]
@@ -581,4 +586,25 @@ mod tests {
             .sum();
         assert_eq!(count, 4);
     }
+}
+#[cfg(test)] mod internal_session_tests {
+ use super::*;
+ #[test] fn internal_sessions_persist_without_appearing_in_list() {
+  let dir=tempfile::tempdir().unwrap(); let path=dir.path().join("sessions.sqlite");
+  { let service=SessionService::open(&path).unwrap(); service.create("ordinary").unwrap(); assert!(service.create_internal("ordinary","trial","job").is_err()); service.create_internal("child","trial","job").unwrap();
+    service.save("child",SessionMessage{id:"m".into(),parent_id:None,role:"user".into(),created_at:"time".into(),parts:vec![ContentPart::text("text","private trial")],extensions:Default::default()},None).unwrap();
+    assert_eq!(service.list().unwrap().iter().map(|s|s.id.as_str()).collect::<Vec<_>>(),vec!["ordinary"]);assert_eq!(service.load("child").unwrap().len(),1); }
+  let reopened=SessionService::open(&path).unwrap();assert_eq!(reopened.list().unwrap().len(),1);assert_eq!(reopened.get("child").unwrap().id,"child");assert_eq!(reopened.load("child").unwrap().len(),1);
+ }
+}
+#[cfg(test)] mod v6_backup_tests {
+ use super::*;
+ #[test] fn migrating_v5_keeps_recoverable_backup() {
+  let dir=tempfile::tempdir().unwrap();let path=dir.path().join("history.sqlite");
+  {let service=SessionService::open(&path).unwrap();service.create("one").unwrap();service.save("one",SessionMessage{id:"message".into(),parent_id:None,role:"user".into(),created_at:"time".into(),parts:vec![ContentPart::text("text","preserved history")],extensions:Default::default()},None).unwrap();}
+  {let db=rusqlite::Connection::open(&path).unwrap();db.execute_batch("DROP TABLE internal_sessions; PRAGMA user_version=5;").unwrap();}
+  {let service=SessionService::open(&path).unwrap();assert_eq!(service.load("one").unwrap().len(),1);}
+  let backup=std::fs::read_dir(dir.path()).unwrap().map(|e|e.unwrap().path()).find(|p|p.file_name().unwrap().to_string_lossy().contains(".pre-v6-")).unwrap();let db=rusqlite::Connection::open(backup).unwrap();let version:i64=db.pragma_query_value(None,"user_version",|r|r.get(0)).unwrap();assert_eq!(version,5);let content:String=db.query_row("SELECT content_json FROM messages WHERE session_id='one'",[],|r|r.get(0)).unwrap();assert!(content.contains("preserved history"));
+  let upgraded=rusqlite::Connection::open(&path).unwrap();let version:i64=upgraded.pragma_query_value(None,"user_version",|r|r.get(0)).unwrap();assert_eq!(version,6);
+ }
 }

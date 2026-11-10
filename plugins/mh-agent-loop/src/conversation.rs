@@ -80,6 +80,9 @@ pub(crate) async fn run_inner(
         return Err("Нужно непустое сообщение пользователя и время ответа.".into());
     }
     let namespace = crate::engine::model_ref(&request.model).map(|(id, _)| format!("plugin:{id}"));
+    if namespace.is_some() && request.options.get("toolAllowlist").is_some() {
+        return Err("toolAllowlist is unsupported by external engines".into());
+    }
     let state = match &namespace {
         Some(namespace) => crate::engine::resume_state(
             store.integration_state(id, namespace)?,
@@ -123,12 +126,12 @@ pub(crate) async fn run_inner(
         )
     });
     let result: Result<SessionRunResult, String> = async {
-        let mut prepared = manager.harness.context.prepare(id, &messages)?;
+        let mut prepared = manager.harness.context.prepare_enriched(id, &messages).await?;
         if prepared.budget.should_compact && !crate::context::compact_prefix(&messages, 4).is_empty() {
             manager
                 .compact_messages_cancellable(id, &request.model, &messages, &mut guard.cancel)
                 .await?;
-            prepared = manager.harness.context.prepare(id, &messages)?;
+            prepared = manager.harness.context.prepare_enriched(id, &messages).await?;
         }
         let mut turns = prepared.turns;
         let mut image_bytes = 0usize;
@@ -155,13 +158,21 @@ pub(crate) async fn run_inner(
             run: request.response_id.clone(),
         };
         let settings = manager.harness.context.workspace_get(id)?;
+        let allowlist = match request.options.get("toolAllowlist") {
+            None => None,
+            Some(value) => {
+                let names = value.as_array().ok_or("toolAllowlist must be an array")?;
+                if names.len() > 128 { return Err("toolAllowlist exceeds limit".into()); }
+                Some(names.iter().map(|v| v.as_str().filter(|s| !s.is_empty() && s.len() <= 128).map(str::to_owned).ok_or("invalid toolAllowlist entry")).collect::<Result<Vec<_>,_>>()?)
+            }
+        };
         let run_context = crate::harness::AgentRunContext {
             session_id: id.into(),
             run_id: request.response_id.clone(),
             tools: tokio::select! {
                 biased;
                 _ = async { if !*guard.cancel.borrow() { let _ = guard.cancel.changed().await; } } => return Err("Run cancelled".into()),
-                tools = manager.tools_for(id) => tools?,
+                tools = manager.tools_for(id) => { let tools = tools?; match &allowlist { Some(names) => tools.restrict_to(names), None => tools } },
             },
             context: manager.harness.context.clone(),
             messages,

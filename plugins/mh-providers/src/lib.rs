@@ -70,7 +70,7 @@ impl rig_agent::agent::hook::AgentHook for ProviderStepHook {
         let prepared = match self
             .run
             .context
-            .prepare(&self.run.session_id, &self.run.messages)
+            .prepare_enriched(&self.run.session_id, &self.run.messages).await
         {
             Ok(value) => value,
             Err(error) => return CompletionCallAction::Stop(error),
@@ -499,12 +499,13 @@ impl ProviderService {
                 run,
             });
         }
+        let has_tools = !dynamic_tools.is_empty();
         macro_rules! run_agent {
             ($model:expr) => {{
                 let builder = AgentBuilder::new($model)
                     .preamble(PREAMBLE)
                     .dynamic_tools(dynamic_tools);
-                let builder = if provider.protocol == "anthropic-messages" {
+                let builder = if provider.protocol == "anthropic-messages" || (streaming && !has_tools) {
                     builder.max_tokens(4096)
                 } else {
                     builder
@@ -516,7 +517,7 @@ impl ProviderService {
                 }
                 let request = request.add_hook(identity_hook);
                 let request = if streaming {
-                    request.max_turns(32)
+                    request.max_turns(if has_tools { 32 } else { 1 })
                 } else {
                     request
                 };

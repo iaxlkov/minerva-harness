@@ -3,6 +3,16 @@ name = "minerva-runtime"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+mh-session-query = { path = "../../plugins/mh-session-query" }
+mh-skills = { path = "../../plugins/mh-skills" }
+mh-memory = { path = "../../plugins/mh-memory" }
+mh-experience = { path = "../../plugins/mh-experience" }
+mh-experiments = { path = "../../plugins/mh-experiments" }
+mh-improvement = { path = "../../plugins/mh-improvement" }
+mh-skill-curation = { path = "../../plugins/mh-skill-curation" }
+sha2 = "0.10"
+
 mh-editor = { path = "../../plugins/mh-editor" }
 mh-agent-loop = { path = "../../plugins/mh-agent-loop" }
 mh-plugin-manager = { path = "../../plugins/mh-plugin-manager" }
@@ -31,4 +41,3 @@ features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"]
 rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }
 rig-agent = { version = "0.46.0", default-features = false }
 tempfile = "3"
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }

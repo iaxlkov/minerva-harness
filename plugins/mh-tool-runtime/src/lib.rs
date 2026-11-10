@@ -184,6 +184,14 @@ impl ToolRegistry {
     }
 }
 impl AdmittedTools {
+    pub fn restrict_to(mut self, names: &[String]) -> Self {
+        self.0.retain(|name, _| names.contains(name));
+        self.1 = IdentityHook {
+            names: self.0.keys().cloned().collect(),
+            pending: Arc::default(),
+        };
+        self
+    }
     pub fn identity_hook(&self) -> IdentityHook {
         self.1.clone()
     }
@@ -191,7 +199,8 @@ impl AdmittedTools {
         self.0.values().map(|r| r.definition.clone()).collect()
     }
     pub fn without_workspace(mut self) -> Self {
-        self.0.retain(|_, t| t.owner != "native.workspace" && t.owner != "native.lsp");
+        self.0
+            .retain(|_, t| t.owner != "native.workspace" && t.owner != "native.skills" && t.owner != "native.lsp");
         self
     }
     pub fn without_owner(mut self, owner: &str) -> Self {
@@ -446,5 +455,44 @@ impl cordis::Plugin for ToolRuntimePlugin {
         let _tools = ctx.provide(self.tools.clone())?;
         let _interactions = ctx.provide(self.interactions.clone())?;
         Ok(())
+    }
+}
+#[cfg(test)]
+mod allowlist_tests {
+    use super::*;
+    #[test]
+    fn restriction_cannot_add_tools() {
+        let registry = ToolRegistry::default();
+        for name in ["allowed", "blocked"] {
+            registry
+                .register(
+                    "test",
+                    ToolDefinition {
+                        name: name.into(),
+                        description: String::new(),
+                        input_schema: serde_json::json!({}),
+                        output_schema: serde_json::json!({}),
+                        side_effect: false,
+                    },
+                    |_, _| Box::pin(async { Ok(serde_json::Value::Null) }),
+                )
+                .unwrap();
+        }
+        let narrowed = registry
+            .snapshot()
+            .restrict_to(&["allowed".into(), "nonexistent".into()]);
+        assert_eq!(
+            narrowed
+                .definitions()
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["allowed"]
+        );
+        assert!(registry
+            .snapshot()
+            .restrict_to(&[])
+            .definitions()
+            .is_empty());
     }
 }

@@ -1,4 +1,5 @@
 pub mod plugins;
+pub mod optional;
 pub mod harness;
 pub mod engine;
 pub use mh_runtime_support::{credential_store, network_policy};

@@ -84,10 +84,10 @@ impl SessionStore {
         let version: i64 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 5 {
+        if version > 6 {
             return Err("База диалогов создана более новой версией приложения".into());
         }
-        if (1..5).contains(&version) {
+        if (1..6).contains(&version) {
             // SQLite's backup API includes committed WAL data and leaves the source untouched.
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -97,7 +97,8 @@ impl SessionStore {
                 .file_name()
                 .ok_or("database filename required")?
                 .to_string_lossy();
-            let backup = path.with_file_name(format!("{name}.pre-v5-{stamp}.sqlite3"));
+            let target_version = if version < 5 { 5 } else { 6 };
+            let backup = path.with_file_name(format!("{name}.pre-v{target_version}-{stamp}.sqlite3"));
             std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -124,6 +125,7 @@ impl SessionStore {
         if version < 5 {
             crate::events::migrate(&mut db)?;
         }
+        if version < 6 { db.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS internal_sessions(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,purpose TEXT NOT NULL,parent_job TEXT NOT NULL); PRAGMA user_version=6; COMMIT;").map_err(|e|e.to_string())?; }
         db.execute("UPDATE runs SET status='interrupted',error='Приложение завершилось до сохранения результата' WHERE status='running'", []).map_err(|e| e.to_string())?;
         Ok(Self {
             connection: Database(Mutex::new(Some(db))),
@@ -141,6 +143,12 @@ impl SessionStore {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+    pub fn create_internal(&self,id:&str,purpose:&str,parent_job:&str)->Result<(),String> {
+        let mut db=self.connection.lock()?; let tx=db.transaction().map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO sessions(id,title,updated_at) VALUES(?1,'Internal session',unixepoch())",[id]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO internal_sessions VALUES(?1,?2,?3)",params![id,purpose,parent_job]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e|e.to_string())
+    }
     pub fn rename(&self,id:&str,title:&str)->Result<(),String>{
         let changed=self.connection.lock()?.execute("UPDATE sessions SET title=?2,updated_at=unixepoch() WHERE id=?1",params![id,title]).map_err(|e|e.to_string())?;
         if changed==0 {return Err("Session not found".into());} Ok(())
@@ -153,11 +161,12 @@ impl SessionStore {
         let changed=tx.execute("INSERT INTO sessions SELECT ?2,title||' — ветка',unixepoch(),model FROM sessions WHERE id=?1",params![source,id]).map_err(|e|e.to_string())?;
         if changed==0 {return Err("Session not found".into());}
         tx.execute("INSERT INTO messages SELECT ?2,m.message_id,m.parent_id,m.role,m.created_at,m.content_json,CASE WHEN r.id IS NULL THEN m.extras_json ELSE json_set(m.extras_json,'$.execution',json_object('status',r.status,'error',r.error)) END,m.seq FROM messages m LEFT JOIN runs r ON r.session_id=m.session_id AND r.id=m.message_id WHERE m.session_id=?1 ORDER BY m.seq",params![source,id]).map_err(|e|e.to_string())?;
+        tx.execute("INSERT INTO session_events(session_id,seq,kind,data_json) SELECT ?2,(SELECT COALESCE(MAX(seq),0) FROM session_events WHERE session_id=?2)+ROW_NUMBER() OVER (ORDER BY m.seq),'fork.provenance',json_object('sourceSessionId',?1,'sourceMessageId',m.message_id,'messageId',m.message_id) FROM messages m WHERE m.session_id=?1",params![source,id]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e|e.to_string())
     }
     pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
         let db = self.connection.lock().map_err(|e| e.to_string())?;
-        let mut q=db.prepare("SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions ORDER BY updated_at DESC,rowid DESC").map_err(|e|e.to_string())?;
+        let mut q=db.prepare("SELECT id,title,updated_at,model,EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) FROM sessions WHERE NOT EXISTS(SELECT 1 FROM internal_sessions i WHERE i.session_id=sessions.id) ORDER BY updated_at DESC,rowid DESC").map_err(|e|e.to_string())?;
         let rows = q
             .query_map([], |r| {
                 Ok(SessionInfo {

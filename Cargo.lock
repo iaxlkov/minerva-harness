@@ -2897,6 +2897,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2912,6 +2913,40 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+]
+
+[[package]]
+name = "mh-experience"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
+name = "mh-experiments"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "mh-tool-runtime",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
+name = "mh-improvement"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2952,6 +2987,18 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "mh-memory"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3010,6 +3057,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mh-session-query"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "mh-sessions"
 version = "0.1.0"
 dependencies = [
@@ -3032,6 +3090,34 @@ dependencies = [
  "tempfile",
  "tokio",
  "ts-rs",
+]
+
+[[package]]
+name = "mh-skill-curation"
+version = "0.1.0"
+dependencies = [
+ "mh-skills",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mh-skills"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "cordis-rs",
+ "mh-tool-runtime",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
@@ -3208,14 +3294,21 @@ dependencies = [
  "mh-agent-loop",
  "mh-context",
  "mh-editor",
+ "mh-experience",
+ "mh-experiments",
+ "mh-improvement",
  "mh-lsp",
  "mh-lsp-rust",
  "mh-mcp",
+ "mh-memory",
  "mh-plugin-manager",
  "mh-providers",
  "mh-runtime-support",
+ "mh-session-query",
  "mh-sessions",
  "mh-shell",
+ "mh-skill-curation",
+ "mh-skills",
  "mh-tool-runtime",
  "mh-workspace-tools",
  "mh-workspaces",
@@ -3226,6 +3319,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -5406,6 +5500,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "serialize-to-javascript"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6752,6 +6859,12 @@ name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
