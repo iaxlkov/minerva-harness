@@ -3005,6 +3005,7 @@ dependencies = [
 name = "mh-plugin-manager"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cordis-rs",
  "mh-context",
  "mh-editor",
@@ -3250,6 +3251,7 @@ dependencies = [
 name = "minerva-plugin-host"
 version = "0.1.0"
 dependencies = [
+ "cap-std",
  "fs2",
  "libc",
  "minerva-plugin-sdk",

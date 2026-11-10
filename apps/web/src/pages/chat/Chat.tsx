@@ -1,8 +1,8 @@
-import {messageQueueOptions} from '../../plugins/message-queue';
+import {object,toolState} from '../../execution/toolModel';
+import {messageQueueOptions,QueueComposerRoot,QueueComposerSend} from '../../../../../plugins/mh-message-queue/ui';
 import {NavigationShell} from '../../app/NavigationShell';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {AttachmentPicker} from '../../harness/AttachmentPicker';
-import {SessionControls} from '../../harness/SessionControls';
 import {SessionFile} from '../../harness/SessionFile';
 import {SessionImage} from '../../harness/SessionImage';
 import {attachmentAdapter} from '../../harness/attachments';
@@ -23,11 +23,24 @@ import { sessionHistory,decodeSessionMessage } from '../../sessionHistory';
 import {useRemoteSession} from '../../app/useRemoteSession';
 import { chatAdapter } from '../../chatAdapter';
 import { ToolHistory } from '../../ToolHistory';
+import {ImageGenerating} from '../../components/assistant-ui/elements/image';
 
 import {UiSlot,workspaceScope,sessionScope} from "../../app/plugins";
 const SessionIdContext=React.createContext('');
 const SessionScopeContext=React.createContext(sessionScope("unselected"));
-function PluginTool(props:React.ComponentProps<typeof ToolHistory>){const scope=React.useContext(SessionScopeContext);return <UiSlot slot="tool.renderers" scope={scope} entryId={props.toolName} componentProps={{...props}} fallback={<ToolHistory {...props}/>}/>;}
+function PluginTool(props:React.ComponentProps<typeof ToolHistory>){
+ const scope=React.useContext(SessionScopeContext),state=toolState(props).status;
+ const approval=scope.kind==='session'&&state==='requires-approval'&&<UiSlot slot="tool.interactions" scope={workspaceScope} componentProps={{sessionId:scope.sessionId,callId:props.toolCallId}}/>;
+ if(props.toolName==='generate_image'){
+  if(state==='completed')return null;
+  if(state==='failed'||state==='cancelled'||state==='interrupted'){
+   const output=object(object(props.result).output),error=typeof output.error==='string'?output.error:'';
+   return <p className="image-generation-error" role="alert">{state==='cancelled'?'Создание изображения отменено.':error||'Не удалось создать изображение.'}</p>;
+  }
+  return <><ImageGenerating callId={props.toolCallId} awaitingApproval={state==='requires-approval'}/>{approval}</>;
+ }
+ return <><UiSlot slot="tool.renderers" scope={scope} entryId={props.toolName} componentProps={{...props}} fallback={<ToolHistory {...props}/>}/>{approval}</>;
+}
 function HistoryFile(props:Omit<React.ComponentProps<typeof SessionFile>,'sessionId'>){return <SessionFile {...props} sessionId={React.useContext(SessionIdContext)}/>;}
 function HistoryImage(props:Omit<React.ComponentProps<typeof SessionImage>,'sessionId'>){return <SessionImage {...props} sessionId={React.useContext(SessionIdContext)}/>;}
 function Message({ role }: { role: 'user' | 'assistant' }) {
@@ -40,23 +53,26 @@ function Message({ role }: { role: 'user' | 'assistant' }) {
 
 function Thread({ model, configured, providers, pluginModels, onSelect,remoteRunning,onRemoteCancel }: { model: string; configured: boolean; providers: Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void;remoteRunning?:boolean;onRemoteCancel?:()=>void }) {
   const scope=React.useContext(SessionScopeContext);
+  const running=useAuiState(state=>state.thread.isRunning);
   const idle=useAuiState(state=>!state.composer.text.trim()&&!state.composer.attachments.length);
-  return <ThreadPrimitive.Root className="thread">
+  const empty=useAuiState(state=>state.thread.isEmpty);
+  return <ThreadPrimitive.Root className={empty?"thread thread-empty":"thread"}>
     <ScrollArea asChild><ThreadPrimitive.Viewport className="viewport">
       <AuiIf condition={(state) => state.thread.isEmpty}><div className="empty">
-        <img className="empty-portrait" src="/minerva-welcome.png" width={280} height={280} alt="Минерва — ваш ассистент"/>
         <h1>С чего начнём?</h1>
-        <p>Задайте вопрос или расскажите, над чем работаете.</p>
       </div></AuiIf>
       <div className="messages"><ThreadPrimitive.Messages>{({ message }) => <Message role={message.role === "user" ? "user" : "assistant"}/>}</ThreadPrimitive.Messages></div>
     </ThreadPrimitive.Viewport></ScrollArea>
     <div className="composer-wrap">
-      <ComposerPrimitive.Root className="oe-relative">
+      <QueueComposerRoot className="oe-relative">
         <UiSlot slot="composer.queue" scope={workspaceScope} componentProps={{}}/>
-        <ComposerBar className="oe-bg-secondary">
-        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove asChild><Button type="button" variant="ghost" size="sm" aria-label={`Удалить ${attachment.name}`}>Удалить</Button></AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ScrollArea asChild><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="placeholder:oe-text-muted-foreground oe-min-h-11 oe-w-full oe-resize-none oe-text-foreground oe-border-0 oe-bg-transparent oe-px-3 oe-text-[15px] oe-outline-none focus-visible:oe-outline-none" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" /></ScrollArea>
+        <ComposerBar className="oe-bg-secondary chat-composer">
+        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove asChild><Button type="button" variant="ghost" size="sm" aria-label={`Удалить ${attachment.name}`}>Удалить</Button></AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ScrollArea asChild><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="placeholder:oe-text-muted-foreground oe-min-h-8 oe-w-full oe-resize-none oe-text-foreground oe-border-0 oe-bg-transparent oe-px-3 oe-text-[15px] oe-outline-none focus-visible:oe-outline-none" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" /></ScrollArea>
         <ComposerToolbar>
+          <div className="composer-access-actions">
           <AttachmentPicker disabled={!!remoteRunning} renderMenu={onClose=><UiSlot slot="composer.menu" scope={workspaceScope} componentProps={{sessionId:scope.kind==='session'?scope.sessionId:'',disabled:!!remoteRunning,onClose}}/>}/>
+          {scope.kind==='session'&&<UiSlot slot="composer.access" scope={workspaceScope} componentProps={{sessionId:scope.sessionId,disabled:!!remoteRunning||running}}/> }
+          </div>
           <ComposerActions>
           <Select value={model || '__none'} onValueChange={value => onSelect(value === '__none' ? '' : value)}>
             <SelectTrigger asChild><ComposerModelTrigger model={model.replace(/^api:[^/]+\//, "") || "Выберите модель"} aria-label="Модель" /></SelectTrigger>
@@ -69,11 +85,11 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
               {[...new Set(pluginModels.map(m=>m.group))].map(group=><SelectGroup key={`plugin:${group}`}><SelectLabel>{group}</SelectLabel>{pluginModels.filter(m=>m.group===group).map(m=><SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectGroup>)}
             </SelectContent>
           </Select>
-          <UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>(!state.thread.isRunning||!idle)&&!remoteRunning}><ComposerPrimitive.Send asChild><ComposerSend streaming={false} idle={idle} aria-label="Отправить сообщение"/></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning&&idle&&!remoteRunning}><ComposerPrimitive.Cancel asChild><ComposerSend streaming idle={false} aria-label="Остановить ответ"/></ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><ComposerSend streaming idle={false} aria-label="Остановить ответ" onClick={onRemoteCancel}/></AuiIf>
+          <UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>(!state.thread.isRunning||!idle)&&!remoteRunning}><QueueComposerSend asChild><ComposerSend streaming={false} idle={idle} aria-label="Отправить сообщение"/></QueueComposerSend></AuiIf><AuiIf condition={state=>state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Cancel asChild><ComposerSend streaming idle={false} aria-label="Остановить ответ"/></ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><ComposerSend streaming idle={false} aria-label="Остановить ответ" onClick={onRemoteCancel}/></AuiIf>
           </ComposerActions>
         </ComposerToolbar>
         </ComposerBar>
-      </ComposerPrimitive.Root>
+      </QueueComposerRoot>
       {remoteRunning&&<AuiIf condition={state=>!state.thread.isRunning}><div role="status">Задача выполняется на сервере…</div></AuiIf>}
     </div>
   </ThreadPrimitive.Root>;
@@ -108,7 +124,7 @@ function SessionChat({ model, configured, providers, pluginModels, onSelect, onP
   const cancelRemote=()=>{if(remote.activeRun)void invoke('runs.cancel',{sessionId:session.id,runId:remote.activeRun.runId}).catch(error=>onError(`Не удалось отменить задачу: ${String(error)}`));};
   return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}>
 
-    <SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun&&!localRun.current} onRemoteCancel={cancelRemote}/>}/><UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
+    <UiSlot slot="session.controls" scope={workspaceScope} componentProps={{sessionId:session.id,running:running||!!remote.activeRun}}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun&&!localRun.current} onRemoteCancel={cancelRemote}/>}/><UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
 
   </AssistantRuntimeProvider></SessionScopeContext.Provider></SessionIdContext.Provider>;
 }

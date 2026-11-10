@@ -1,6 +1,8 @@
+import {skillsPlugin} from '../../../../plugins/mh-skills/ui';
+import {interactionsPlugin} from '../../../../plugins/mh-interactions/ui';
 import type {EditorTabsSlotProps,ShellNavigationProps,ShellSectionProps} from '../../../../packages/plugin-sdk/src/slots.types';
 import {workspacePlugin} from '../../../../plugins/mh-workspaces/ui';
-import {messageQueuePlugin} from '../plugins/message-queue';
+import {messageQueuePlugin} from '../../../../plugins/mh-message-queue/ui';
 import {editorPlugin} from '../plugins/editor';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
@@ -41,6 +43,9 @@ export interface AppSlotProps {
  'navigation.items':{session:SessionInfo;sessions:SessionInfo[];disabled?:boolean;onNew:(workspaceId?:string)=>void;onSession:(session:SessionInfo)=>void};
  'settings.pages':SettingsPageProps;
  'conversation.views':{session:SessionInfo;model:string;configured:boolean;providers:Provider[];pluginModels?:PluginModel[];onSelect:(model:string)=>void};
+ 'session.controls':{sessionId:string;running:boolean};
+ 'composer.access':{sessionId:string;disabled:boolean};
+ 'tool.interactions':{sessionId:string;callId:string};
  'composer.queue':Record<string, never>;
  'composer.actions':{model:string;onSelect:(model:string)=>void};
  'composer.menu':{sessionId:string;disabled:boolean;onClose:()=>void};
@@ -56,7 +61,7 @@ export function registerUiSlot<K extends SlotName>(ctx:BrowserPluginContext,slot
 export async function createBrowserComposition(selection:SlotSelection={}){
  const host=new BrowserPluginHost(selection);
  await host.activate([{id:'minerva-ui',apply(ctx){ctx.slots.register('root.layout',{entryId:'default',component:({children}:{children:ReactNode})=><>{children}</>});}}]);
- await host.activate([workspacePlugin(workspaceScope),editorPlugin(workspaceScope),messageQueuePlugin(workspaceScope)]);
+ await host.activate([skillsPlugin(workspaceScope),workspacePlugin(workspaceScope),editorPlugin(workspaceScope),interactionsPlugin(workspaceScope),messageQueuePlugin(workspaceScope)]);
  return host;
 }
 export function UiSlot<K extends SlotName>({slot,scope,entryId,componentProps,fallback}: {slot:K;scope:Scope;entryId?:string;componentProps?:AppSlotProps[K];fallback?:ReactNode}){

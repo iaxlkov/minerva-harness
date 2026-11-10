@@ -9,6 +9,6 @@ export function attachmentAdapter(sessionId:string,invoke:Invoke):AttachmentAdap
   const bytes=new Uint8Array(await attachment.file.arrayBuffer());let binary='';
   for(let offset=0;offset<bytes.length;offset+=32768)binary+=String.fromCharCode(...bytes.subarray(offset,offset+32768));
   const ref=await invoke('attachments.put',{sessionId,name:attachment.name,mimeType:attachment.contentType!,data:btoa(binary)});
-  return {...attachment,status:{type:'complete'},content:[attachment.type==='image'?{type:'image',image:'',providerMetadata:{minerva:{attachment:ref}}}:{type:'file',data:'',mimeType:ref.mimeType,filename:ref.name,providerMetadata:{minerva:{attachment:ref}}}]};
+  return {...attachment,status:{type:'complete'},content:[attachment.type==='image'?{type:'image',image:'',filename:attachment.name,providerMetadata:{minerva:{attachment:ref}}}:{type:'file',data:'',mimeType:ref.mimeType,filename:ref.name,providerMetadata:{minerva:{attachment:ref}}}]};
  },async remove(){}};
 }

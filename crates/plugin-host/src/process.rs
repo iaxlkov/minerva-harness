@@ -220,7 +220,8 @@ impl Process {
             return Err("request exceeds limit".into());
         }
         let mut remote_error = false;
-        let result = timeout(self.deadline, async {
+        let deadline = if method == "images.available" { Duration::from_secs(12) } else { self.deadline };
+        let result = timeout(deadline, async {
             self.input.write_all(&request).await.map_err(err)?;
             self.input.write_all(b"\n").await.map_err(err)?;
             self.input.flush().await.map_err(err)?;

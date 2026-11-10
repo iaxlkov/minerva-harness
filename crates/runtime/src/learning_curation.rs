@@ -477,7 +477,8 @@ mod integration_tests {
             .unwrap();
         assert_eq!(published.state, mh_skill_curation::State::Published);
         assert_eq!(
-            runtime.learning.skills.list(&access, &scope).unwrap().items[0].revision,
+            runtime.learning.skills.list(&access, &scope).unwrap().items.into_iter()
+                .find(|skill| skill.name == "example").expect("published example skill").revision,
             published.published_revision.unwrap()
         );
         runtime
@@ -486,7 +487,8 @@ mod integration_tests {
             .rollback(&access, "p", &publisher)
             .unwrap();
         assert_eq!(
-            runtime.learning.skills.list(&access, &scope).unwrap().items[0].revision,
+            runtime.learning.skills.list(&access, &scope).unwrap().items.into_iter()
+                .find(|skill| skill.name == "example").expect("published example skill").revision,
             baseline.revision
         );
         server.join().unwrap();

@@ -20,7 +20,13 @@ export function transcriptContent(parts: ContentPart[]): ThreadAssistantMessage[
         const result = results.get(data.callId);
         const args = data.arguments && typeof data.arguments === 'object' && !Array.isArray(data.arguments) ? data.arguments : { input: data.arguments };
         const status=result?(data.status==='cancelled'||data.status==='failed'?data.status:result.isError?'failed':'completed'):data.status;
-        return [{ type: 'tool-call', toolCallId: data.callId, toolName: data.name, args, argsText: JSON.stringify(args), providerMetadata:{minerva:{...(status!==undefined?{status}:{}),...(data.meta!==undefined?{meta:data.meta}:{}),...(result?.meta!==undefined?{resultMeta:result.meta}:{})}}, ...(result ? { result: { output: result.output }, isError: result.isError } : {}) }];
+        const call = { type: 'tool-call', toolCallId: data.callId, toolName: data.name, args, argsText: JSON.stringify(args), providerMetadata:{minerva:{...(status!==undefined?{status}:{}),...(data.meta!==undefined?{meta:data.meta}:{}),...(result?.meta!==undefined?{resultMeta:result.meta}:{})}}, ...(result ? { result: { output: result.output }, isError: result.isError } : {}) };
+        const raw=result?.output, wrapped=Array.isArray(raw)&&raw.length===1?jsonObject(raw[0]):undefined;
+        const output=jsonObject((wrapped?.type==='json'?wrapped.value:raw) ?? null), image=jsonObject(output?.attachment ?? null);
+        if(['generate_image','image_status'].includes(data.name) && !result?.isError && output?.status==='completed' && image && typeof image.id==='string' && typeof image.name==='string' && typeof image.bytes==='number' && typeof image.mimeType==='string' && ['image/png','image/jpeg','image/webp'].includes(image.mimeType)) {
+          return [call,{type:'image',image:'',filename:image.name,providerMetadata:{minerva:{attachment:image}}}];
+        }
+        return [call];
       }
       case 'file': {
         if(!data||typeof data.id!=='string'||typeof data.name!=='string'||typeof data.bytes!=='number'||typeof data.mimeType!=='string')throw Error('Некорректное вложение истории');

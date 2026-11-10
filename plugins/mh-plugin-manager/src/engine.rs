@@ -84,7 +84,7 @@ pub async fn run_with_context(
                 json!({"runId":run_id,"model":model,"turns":turns,"state":state,"context":wire_context}),
             )
             .await?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(240);
+        let mut deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(240);
         let mut previous = None;
         let mut handled=std::collections::HashMap::new();
         let mut calls=std::collections::HashMap::new();
@@ -119,6 +119,9 @@ pub async fn run_with_context(
                 let mut tool_context=ctx.tool_context.clone();
                 tool_context.call_id=request.call_id.clone();
                 tool_context.sink=Some(tool_sink.clone());
+                let started=tokio::time::Instant::now();
+                let image=request.kind=="tool" && request.tool.as_deref()==Some("generate_image");
+                let interaction_deadline=if image { deadline + std::time::Duration::from_secs(960) } else { deadline };
                 let pending=engine_interaction(ctx,request,tool_context);
                 tokio::pin!(pending);
                 let answer=tokio::select! {
@@ -128,12 +131,13 @@ pub async fn run_with_context(
                         ctx.tool_context.interactions.cancel_run(&ctx.session_id,&ctx.run_id);
                         return Err("Run cancelled".into());
                     },
-                    _=tokio::time::sleep_until(deadline)=>{
+                    _=tokio::time::sleep_until(interaction_deadline)=>{
                         ctx.tool_context.cancellation.cancel();
                         return Err("Engine run timed out".into());
                     },
                     answer=&mut pending=>answer?,
                 };
+                if image { deadline += started.elapsed(); }
                 manager.engine_call(plugin,"engine.answer",json!({"runId":run_id,"id":request.id,"decision":answer["decision"],"answer":answer["answer"],"output":answer["output"],"isError":answer["isError"]})).await?;
             }
             snapshot.transcript=tool_sink.transcript.lock().map_err(|e|e.to_string())?.clone();
@@ -265,6 +269,11 @@ impl crate::tools::ToolEventSink for EngineToolSink {
         if let Some(result) = result {
             transcript.parts[index].data["meta"] = match result {
                 Ok(value) => value.clone(),
+                Err(error) if name == "generate_image" && transcript.parts[index].data["meta"]["jobId"].is_string() => {
+                    let mut previous=transcript.parts[index].data["meta"].clone();
+                    previous["error"]=json!(error);
+                    previous
+                }
                 Err(error) => json!({"error":error}),
             };
             if matches!(status, "completed" | "failed" | "cancelled")
@@ -402,6 +411,17 @@ fn admit_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn interrupted_image_retains_its_generator_job() {
+        use crate::tools::{ToolContext,ToolEventSink};
+        let sink=EngineToolSink { transcript:std::sync::Mutex::new(Transcript::default()), host_parts:std::sync::Mutex::new(Vec::new()), sink:std::sync::Arc::new(|_|Ok(())) };
+        let ctx=ToolContext {session_id:"s".into(),run_id:"r".into(),call_id:"c".into(),cwd:None,policy:crate::tools::PermissionPolicy::Allow,cancellation:Default::default(),interactions:std::sync::Arc::new(crate::tools::InteractionBroker::default()),sink:None};
+        sink.emit(&ctx,"generate_image",&json!({}),"running",Some(&Ok(json!({"generatorId":"codex","jobId":"job"})))).unwrap();
+        sink.emit(&ctx,"generate_image",&json!({}),"cancelled",Some(&Err("cancelled".into()))).unwrap();
+        let transcript=sink.transcript.lock().unwrap();
+        assert_eq!(transcript.parts[0].data["meta"]["jobId"],"job");
+        assert_eq!(transcript.parts[0].data["meta"]["error"],"cancelled");
+    }
     #[test]
     fn repeated_requests_cannot_change_arguments_or_repeat_effects() {
         let mut handled = std::collections::HashMap::new();

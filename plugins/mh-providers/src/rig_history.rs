@@ -442,7 +442,7 @@ impl crate::tools::ToolEventSink for HistoryHook {
     fn emit(
         &self,
         context: &crate::tools::ToolContext,
-        _: &str,
+        name: &str,
         _: &serde_json::Value,
         status: &str,
         result: Option<&Result<serde_json::Value, String>>,
@@ -452,6 +452,11 @@ impl crate::tools::ToolEventSink for HistoryHook {
         if let Some(result) = result {
             metadata["meta"] = match result {
                 Ok(output) => output.clone(),
+                Err(error) if name == "generate_image" && state.tool_states.get(&context.call_id).is_some_and(|previous| previous["meta"]["jobId"].is_string()) => {
+                    let mut previous=state.tool_states[&context.call_id]["meta"].clone();
+                    previous["error"]=json!(error);
+                    previous
+                }
                 Err(error) => json!({"error":error}),
             };
         }
@@ -493,6 +498,17 @@ impl crate::tools::ToolEventSink for HistoryHook {
 #[cfg(test)]
 mod stream_tests {
     use super::*;
+    #[test]
+    fn interrupted_image_keeps_job_identity_in_tool_state() {
+        use crate::tools::{ToolContext,ToolEventSink};
+        let hook=HistoryHook::new(Arc::new(|_|Ok(())));
+        let context=ToolContext {session_id:"s".into(),run_id:"r".into(),call_id:"c".into(),cwd:None,policy:crate::tools::PermissionPolicy::Allow,cancellation:Default::default(),interactions:Arc::new(crate::tools::InteractionBroker::default()),sink:None};
+        hook.emit(&context,"generate_image",&json!({}),"running",Some(&Ok(json!({"generatorId":"codex","jobId":"job"})))).unwrap();
+        hook.emit(&context,"generate_image",&json!({}),"cancelled",Some(&Err("cancelled".into()))).unwrap();
+        let state=hook.state.lock().unwrap();
+        assert_eq!(state.tool_states["c"]["meta"]["jobId"],"job");
+        assert_eq!(state.tool_states["c"]["meta"]["error"],"cancelled");
+    }
     #[test]
     fn running_tool_progress_is_metadata_until_terminal_result() {
         use crate::tools::{ToolContext, ToolEventSink};

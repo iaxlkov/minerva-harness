@@ -187,11 +187,26 @@ mod tests {
             sink: None,
         };
         let args = json!({"id":reference.id,"path":"copy.bin"});
-        assert!(tools
-            .snapshot()
-            .execute("save_attachment", args.clone(), call.clone())
-            .await
-            .is_err());
+        let denied = tokio::spawn({
+            let admitted = tools.snapshot();
+            let args = args.clone();
+            let call = call.clone();
+            async move { admitted.execute("save_attachment", args, call).await }
+        });
+        let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(item) = interactions.list("s").pop() {
+                    break item;
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert!(!dir.path().join("copy.bin").exists());
+        assert!(interactions.answer(crate::tools::InteractionAnswer {
+            session_id: "s".into(), id: pending.id, decision: "deny".into(), answer: None,
+        }));
+        assert!(tokio::time::timeout(std::time::Duration::from_secs(2), denied)
+            .await.unwrap().unwrap().is_err());
         call.policy = crate::tools::PermissionPolicy::Allow;
         tools
             .snapshot()

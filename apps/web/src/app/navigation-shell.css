@@ -253,6 +253,9 @@ html body {
 .settings-screen .settings-body > p {
   margin-bottom: 28px;
 }
+.settings-screen .settings-body > button {
+  margin-left: max(0px, calc((100% - 880px) / 2));
+}
 .settings-screen .settings-body > .provider-add {
   margin-top: 20px;
 }

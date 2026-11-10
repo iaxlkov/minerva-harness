@@ -45,6 +45,17 @@ test('images project validated raster data and preserve durable references witho
   assert.equal(transcriptContent([{kind:'image',data:ref}])[0].image,'');
   assert.throws(()=>transcriptContent([{kind:'image',data:{...ref,mimeType:'image/svg+xml',data:'bad'}}]),/изображение/);
 });
+test('completed image generation projects a session-owned image without trusting file paths',()=>{
+ const attachment={id:'image-2',name:'generated.png',mimeType:'image/png',bytes:123};
+ const parts=[{kind:'tool-call',data:{callId:'c',name:'generate_image',arguments:{prompt:'hello'}}},{kind:'tool-result',data:{callId:'c',output:{status:'completed',attachment,path:'C:/private.png'},isError:false}}];
+ const result=transcriptContent(parts);
+ assert.equal(result[0].type,'tool-call');assert.equal(result[1].type,'image');
+ assert.equal(result[1].image,'');assert.deepEqual(result[1].providerMetadata.minerva.attachment,attachment);
+ const wrapped=[parts[0],{...parts[1],data:{...parts[1].data,output:[{type:'json',value:parts[1].data.output}]}}];
+ assert.equal(transcriptContent(wrapped)[1].type,'image');
+ assert.equal(transcriptContent([{...parts[0]}, {...parts[1],data:{...parts[1].data,isError:true}}]).length,1);
+ assert.equal(transcriptContent([{...parts[0]}, {...parts[1],data:{...parts[1].data,output:{status:'running',attachment}}}]).length,1);
+});
 test('neutral extension scalars stay read-only data and malformed tool identities are rejected',()=>{
  assert.deepEqual(transcriptContent([{kind:'extension',data:null}]),[{type:'data',name:'provider-item',data:null}]);
  assert.throws(()=>transcriptContent([{kind:'tool-call',data:null}]),/вызов инструмента/);

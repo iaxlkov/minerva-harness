@@ -14,6 +14,8 @@ test('application composition renders registered UI, replaces layout and cleans 
   assert.match(renderTool(host),/fallback/);await host.activate([tools]);
   assert.match(renderTool(host),/Shell result/);assert.doesNotMatch(renderTool(host),/Unrelated result/);
   await host.disable('tools');assert.match(renderTool(host),/fallback/);
+  assert.match(renderSettings(host),/Навыки/);
+  await host.disable('skills-ui');
   assert.equal(renderSettings(host),'');
   await host.activate([editorExtra]);
   for(const slot of ['editor.tabs.start','editor.tabs.end']) assert.match(renderEditorSlot(host,slot),new RegExp(slot+':s:src/main.rs'));

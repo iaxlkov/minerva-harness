@@ -30,6 +30,34 @@ fn config(path: &std::path::Path) -> RuntimeConfig {
         config_dir: path.join("config"),
     }
 }
+
+#[tokio::test]
+async fn invalid_skill_does_not_block_healthy_skills_or_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("workspace");
+    for name in ["good", "bad"] {
+        std::fs::create_dir_all(root.join(".agents/skills").join(name)).unwrap();
+    }
+    std::fs::write(root.join(".agents/skills/good/SKILL.md"), "---\ndescription: Healthy skill\n---\nHealthy body").unwrap();
+    std::fs::write(root.join(".agents/skills/bad/SKILL.md"), "---\ndisable-model-invocation: 'false'\n---\nBroken body").unwrap();
+    let rt = Runtime::start(config(dir.path())).await.unwrap();
+    rt.sessions.create("first").unwrap();
+    {
+        let db = rt.plugins.harness.context.db().unwrap();
+        db.execute("INSERT INTO projects(id,title,path) VALUES('w1','one',?1)", [root.to_str().unwrap()]).unwrap();
+        db.execute("INSERT INTO project_sessions VALUES('first','w1')", []).unwrap();
+    }
+    rt.plugins.set_optional_enabled(true).await.unwrap();
+    rt.plugins.set_enabled("skills", true).await.unwrap();
+    let scope = json!({"kind":"workspace","workspaceId":"w1"});
+    let catalog = call(&rt, "skills", "list", "first", scope, json!({})).await.unwrap();
+    assert_eq!(catalog["incomplete"], true);
+    assert!(catalog["diagnostics"].to_string().contains("bad"));
+    let context = rt.plugins.harness.context.prepare_enriched("first", &[]).await.unwrap();
+    assert!(context.system_prompt.contains("Available skill good: Healthy skill"));
+    assert!(!context.system_prompt.contains("Available skill bad:"));
+    assert!(rt.plugins.harness.context.load_skill("first", "good").unwrap().contains("Healthy body"));
+}
 #[tokio::test]
 async fn optional_learning_persists_and_enforces_scope() {
     let dir = tempfile::tempdir().unwrap();
@@ -254,14 +282,23 @@ async fn optional_learning_persists_and_enforces_scope() {
         interactions: rt.plugins.harness.interactions.clone(),
         sink: None,
     };
-    assert!(tools
-        .execute(
-            "memory_remember",
-            json!({"text":"Tool memory retained"}),
-            tool_context(minerva_runtime::tools::PermissionPolicy::ReadOnly)
-        )
-        .await
-        .is_err());
+    let denied = tokio::spawn({
+        let tools = tools.clone();
+        let context = tool_context(minerva_runtime::tools::PermissionPolicy::ReadOnly);
+        async move { tools.execute("memory_remember", json!({"text":"Tool memory retained"}), context).await }
+    });
+    let interactions = &rt.plugins.harness.interactions;
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = interactions.list("first").pop() { break item; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert!(interactions.answer(minerva_runtime::tools::InteractionAnswer {
+        session_id: "first".into(), id: pending.id, decision: "deny".into(), answer: None,
+    }));
+    assert!(tokio::time::timeout(std::time::Duration::from_secs(2), denied)
+        .await.unwrap().unwrap().is_err());
     let first = tools
         .execute(
             "memory_remember",
@@ -300,4 +337,25 @@ async fn optional_learning_persists_and_enforces_scope() {
         "Remember the violet lantern"
     );
     reopened.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn skill_catalog_works_without_sessions_and_rejects_unknown_workspaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(root.join(".agents/skills/local-test")).unwrap();
+    std::fs::write(root.join(".agents/skills/local-test/SKILL.md"), "---\ndescription: Local skill\n---\nBody").unwrap();
+    let rt = Runtime::start(config(dir.path())).await.unwrap();
+    rt.plugins.harness.context.db().unwrap().execute("INSERT INTO projects(id,title,path) VALUES('empty','Empty',?1)", [root.to_str().unwrap()]).unwrap();
+    rt.plugins.set_enabled("skills", false).await.unwrap();
+    assert!(rt.plugins.plugin_call("skills", "catalog", json!({})).await.is_err());
+    rt.plugins.set_optional_enabled(true).await.unwrap();
+    rt.plugins.set_enabled("skills", true).await.unwrap();
+    let local = rt.plugins.plugin_call("skills", "catalog", json!({"workspaceId":"empty"})).await.unwrap();
+    assert_eq!(local["items"].as_array().unwrap().len(), 1);
+    assert_eq!(local["items"][0]["name"], "local-test");
+    let global = rt.plugins.plugin_call("skills", "catalog", json!({})).await.unwrap();
+    assert!(!global["items"].as_array().unwrap().iter().any(|item| item["name"] == "local-test"));
+    assert!(rt.plugins.plugin_call("skills", "catalog", json!({"workspaceId":"missing"})).await.is_err());
+    assert!(rt.plugins.plugin_call("skills", "catalog", json!({"path":"C:/"})).await.is_err());
 }

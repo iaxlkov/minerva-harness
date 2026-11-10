@@ -1,5 +1,6 @@
 //! Host-owned image selection is independent of the calling chat model.
 use super::run_plugin_tool;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use crate::tools::{ToolContext, ToolDefinition, ToolRegistry};
 use minerva_plugin_host::Host;
 use rusqlite::{params, OptionalExtension};
@@ -122,7 +123,7 @@ pub(super) fn register(
 ) -> Result<(), String> {
     let selections = Arc::new(Selections::new(store));
     let generation = ToolDefinition {
-        name: "generate_image".into(), description: "Create one image. The host remembers the generator for this session and asks when a choice is needed. Returns a background job; use image_status later. Never retry an uncertain submission.".into(),
+        name: "generate_image".into(), description: "Create one image and wait for its result. Never retry an uncertain submission.".into(),
         input_schema: json!({"type":"object","properties":{"prompt":{"type":"string","minLength":1,"maxLength":12000}},"required":["prompt"],"additionalProperties":false}), output_schema: json!({"type":"object"}), side_effect: true,
     };
     let status = ToolDefinition {
@@ -135,22 +136,22 @@ pub(super) fn register(
         registry.register_with_timeout(
             OWNER,
             definition,
-            Duration::from_secs(600),
+            Duration::from_secs(960),
             move |context, args| {
                 let host = host.clone();
                 let selections = selections.clone();
                 Box::pin(async move {
                     let id = if generate {
                         let mut providers = Vec::new();
+                        let mut failures = Vec::new();
                         for entry in host
                             .roster()
                             .into_iter()
                             .filter(|p| p.enabled && p.manifest.as_ref().is_some_and(is_generator))
                         {
                             // Probe health without submitting an image request.
-                            if let Ok(probe) =
-                                host.call(&entry.id, "images.available", json!({})).await
-                            {
+                            match host.call(&entry.id, "images.available", json!({})).await {
+                              Ok(probe) => {
                                 if probe["available"] == true {
                                     let label = probe["name"]
                                         .as_str()
@@ -158,9 +159,15 @@ pub(super) fn register(
                                         .unwrap_or(&entry.id)
                                         .to_owned();
                                     providers.push((entry.id, label));
+                                } else if failures.len() < 8 {
+                                    let reason=probe["reason"].as_str().unwrap_or("генератор сообщил available=false");
+                                    failures.push(format!("{}: {}",entry.id,reason.chars().take(240).collect::<String>()));
                                 }
+                              }
+                              Err(error) => { if failures.len() < 8 { failures.push(format!("{}: {}",entry.id,error.chars().take(240).collect::<String>())); } }
                             }
                         }
+                        if providers.is_empty() && !failures.is_empty() { return Err(format!("Сейчас нет доступных генераторов изображений. {}", failures.join("; "))); }
                         selections.choose(&context, &providers).await?
                     } else {
                         let id = args["generatorId"].as_str().ok_or("Missing generatorId")?;
@@ -172,12 +179,12 @@ pub(super) fn register(
                         id.to_owned()
                     };
                     let arguments = if generate {
-                        args
+                        args.clone()
                     } else {
                         json!({"jobId":args["jobId"]})
                     };
                     let mut result = run_plugin_tool(
-                        host,
+                        host.clone(),
                         &id,
                         if generate {
                             "generate_image"
@@ -185,11 +192,41 @@ pub(super) fn register(
                             "image_status"
                         },
                         arguments,
-                        context,
+                        context.clone(),
                     )
                     .await?;
                     if !result.is_object() {
                         return Err("Invalid image generator result".into());
+                    }
+                    if generate && !matches!(result["status"].as_str(), Some("running"|"completed")) {
+                        return Err(result["error"].as_str().unwrap_or("Invalid image generator status").to_owned());
+                    }
+                    if generate && result["status"] == "running" {
+                        let job = result["jobId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128).ok_or("Invalid image job ID")?.to_owned();
+                        if let Some(sink) = &context.sink {
+                            sink.emit(&context, "generate_image", &args, "running", Some(&Ok(json!({"generatorId":id,"jobId":job,"status":"running"}))))?;
+                        }
+                        loop {
+                            tokio::select! {
+                                _ = context.cancellation.cancelled() => return Err("Image generation cancelled; do not resubmit automatically".into()),
+                                _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+                            }
+                            result = run_plugin_tool(host.clone(), &id, "image_status", json!({"jobId":job}), context.clone()).await?;
+                            match result["status"].as_str() {
+                                Some("running") => continue,
+                                Some("completed") => break,
+                                Some("failed") => return Err(result["error"].as_str().unwrap_or("Image generation failed").to_owned()),
+                                _ => return Err("Invalid image job status".into()),
+                            }
+                        }
+                    }
+                    if result["status"] == "completed" {
+                        let path = result["path"].as_str().ok_or("Image result has no path")?;
+                        let mime = result["mimeType"].as_str().filter(|m| matches!(*m, "image/png" | "image/jpeg" | "image/webp")).ok_or("Invalid image MIME")?;
+                        let bytes = host.read_plugin_file(&id, std::path::Path::new(path), 10 * 1024 * 1024)?;
+                        let ext = match mime { "image/png" => "png", "image/jpeg" => "jpg", _ => "webp" };
+                        let attachment = selections.store.put_attachment(&context.session_id, &format!("generated.{ext}"), mime, &STANDARD.encode(bytes))?;
+                        result = json!({"status":"completed","attachment":attachment});
                     }
                     result["generatorId"] = json!(id);
                     Ok(result)

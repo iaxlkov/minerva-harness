@@ -1,0 +1,37 @@
+import {test,expect} from '@playwright/test';
+import {build} from 'esbuild';
+import {readFile} from 'node:fs/promises';
+import {viteWorkerStub} from './vite-worker-stub.mjs';
+test('skills plugin settings and workspace menu',async({page},info)=>{
+ const bundle=await build({plugins:[viteWorkerStub],stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+ import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
+ import {BrowserPluginHost} from './packages/plugin-sdk/src';
+ import {PluginRoot,UiSlot,workspaceScope} from './apps/web/src/app/plugins';
+ import {skillsPlugin} from './plugins/mh-skills/ui';
+ import {ContextMenu} from './apps/web/src/components/ContextMenu';
+ import {configureClient,createClient} from './packages/client/src';
+ window.fail=false;
+ configureClient(createClient(async(method,p)=>{window.lastRequest=p;if(window.fail)throw Error('PLUGIN_UNAVAILABLE');return {items:[{name:p.params.workspaceId?'local-review':'global-review',description:'Проверка навыков и интерфейса Минервы',providerId:'test',instructionPath:'C:/skills/review/SKILL.md',modelInvocable:true,userInvocable:true}],incomplete:false,diagnostics:[]};}));
+ const host=new BrowserPluginHost();
+ await host.activate([{id:'minerva-ui',apply(){}},skillsPlugin(workspaceScope)]);
+ function App(){const [tab,setTab]=useState('skills');return <PluginRoot host={host}><nav><UiSlot slot="settings.pages" scope={workspaceScope} componentProps={{placement:'navigation',selectedPage:tab,onSelectPage:setTab}}/></nav><main><UiSlot slot="settings.pages" scope={workspaceScope} entryId={tab} componentProps={{placement:'body',selectedPage:tab,onSelectPage:setTab}}/></main><ContextMenu target={{kind:'workspace',value:{workspace:{id:'empty',title:'OEStudio'},disabled:false}}} scope={workspaceScope} label="Меню workspace — OEStudio"><span>OEStudio</span></ContextMenu><UiSlot slot="shell.content.after" scope={workspaceScope} componentProps={{section:'chat',onNavigate:()=>{}}}/></PluginRoot>};
+ createRoot(document.getElementById('root')).render(<App/>);
+ `},bundle:true,format:'esm',write:false,loader:{'.css':'empty'}});
+ const css=await readFile('plugins/mh-skills/ui/skills.css','utf8');
+ const appCss=await readFile('apps/web/src/style.css','utf8');
+ await page.route('http://skills.test/**',route=>route.fulfill({contentType:'text/html',body:`<style>${appCss}\n${css}\n:root{--background:#1c1b1a;--border:#454441;--muted-foreground:#aaa6a0}body{color:#e9e6e1;background:#1c1b1a;font:14px system-ui;padding:24px}main{max-width:760px}button{color:inherit;background:#383631;border:1px solid #454441;border-radius:8px;padding:8px;cursor:pointer}</style><div id="root"></div><script type="module">${bundle.outputFiles[0].text}</script>`}));
+ await page.setViewportSize({width:1000,height:720});await page.goto('http://skills.test');
+ await expect(page.getByText('global-review',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>window.lastRequest.params)).toEqual({});
+ await page.screenshot({path:info.outputPath('skills-settings.png')});
+ await page.getByLabel('Меню workspace — OEStudio').click();await page.getByRole('menuitem',{name:'Локальные навыки'}).click();
+ const dialog=page.getByRole('dialog');await expect(dialog.getByText('local-review',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>window.lastRequest.params)).toEqual({workspaceId:'empty'});
+ await dialog.getByRole('button',{name:'Обновить'}).click();await expect(dialog.getByText('local-review',{exact:true})).toBeVisible();
+ await page.screenshot({path:info.outputPath('skills-workspace.png')});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:info.outputPath('skills-mobile.png')});
+ expect(await dialog.evaluate(el=>el.getBoundingClientRect().right<=innerWidth)).toBe(true);
+ await page.getByLabel('Закрыть',{exact:true}).click();await expect(dialog).toHaveCount(0);
+ await page.getByLabel('Меню workspace — OEStudio').click();await page.getByRole('menuitem',{name:'Локальные навыки'}).click();await expect(dialog).toBeVisible();await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+ await page.evaluate(()=>window.fail=true);await page.getByRole('button',{name:'Обновить'}).click();await expect(page.getByRole('alert')).toContainText('PLUGIN_UNAVAILABLE');
+});

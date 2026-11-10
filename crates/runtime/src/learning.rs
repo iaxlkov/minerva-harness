@@ -718,9 +718,85 @@ impl Learning {
             _ => Err("unknown learning plugin".into()),
         }
     }
+    fn skill_catalog(&self, params: Value) -> Result<Value, String> {
+        if !self.local || !self.enabled("skills") {
+            return Err("PLUGIN_UNAVAILABLE".into());
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Request {
+            workspace_id: Option<String>,
+        }
+        let request: Request = decode(params)?;
+        let cwd: Option<String> = if let Some(id) = &request.workspace_id {
+            self.context
+                .db()?
+                .query_row("SELECT path FROM projects WHERE id=?1", [id], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+        } else {
+            None
+        };
+        // Catalog access is host-owned and never reads session-scoped data.
+        let access = AccessContext {
+            actor_id: self.actor.clone(),
+            session_id: "skills-catalog".into(),
+            workspace_id: request.workspace_id.clone(),
+            allow_user_scope: true,
+        };
+        self.register_skill_roots(&access, cwd)?;
+        let scope = request
+            .workspace_id
+            .map(|workspace_id| Scope::Workspace { workspace_id })
+            .unwrap_or(Scope::User);
+        let mut catalog = self
+            .skills
+            .list(&access, &scope)
+            .map_err(|e| e.to_string())?;
+        if matches!(scope, Scope::Workspace { .. }) {
+            catalog.items.retain(|item| {
+                item.provider_id.starts_with("workspace-") || item.provider_id == "managed"
+            });
+        }
+        encode(catalog)
+    }
     pub fn ensure_skill_roots(&self, access: &AccessContext) -> Result<(), String> {
         let settings = self.context.workspace_get(&access.session_id)?;
-        if let (Some(cwd), Some(workspace_id)) = (settings.cwd, access.workspace_id.clone()) {
+        self.register_skill_roots(access, settings.cwd)
+    }
+    fn register_skill_roots(
+        &self,
+        access: &AccessContext,
+        cwd: Option<String>,
+    ) -> Result<(), String> {
+        if access.allow_user_scope {
+            if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+            {
+                for (order, path) in [".agents/skills", ".claude/skills", ".codex/skills"]
+                    .iter()
+                    .enumerate()
+                {
+                    let root = PathBuf::from(&home).join(path);
+                    if !root.try_exists().map_err(|e| e.to_string())? {
+                        continue;
+                    }
+                    if let Err(e) = self.skills.register_provider(
+                        access,
+                        mh_skills::ProviderConfig {
+                            id: format!("user-{order}"),
+                            scope: Scope::User,
+                            layer: mh_skills::Layer::User,
+                            order: order as u32,
+                            root: root.canonicalize().map_err(|e| e.to_string())?,
+                        },
+                    ) {
+                        if e.code != "CONFLICT" {
+                            return Err(e.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if let (Some(cwd), Some(workspace_id)) = (cwd, access.workspace_id.clone()) {
             for (order, path) in [".agents/skills", ".claude/skills"].iter().enumerate() {
                 let root = PathBuf::from(&cwd).join(path);
                 if root.is_dir() {
@@ -936,7 +1012,7 @@ impl OptionalPlugins for Learning {
                 optional_enabled: s.optional,
                 can_toggle: self.local && !s.closed,
                 origin: "builtin-optional".into(),
-                has_ui: false,
+                has_ui: *id == "skills",
                 error: if !self.local {
                     Some("Local learning plugins are unavailable in hosted mode".into())
                 } else if s.requested.get(*id) == Some(&true)
@@ -991,7 +1067,12 @@ impl OptionalPlugins for Learning {
         method: &'a str,
         params: Value,
     ) -> OptionalFuture<'a, Value> {
-        Box::pin(async move { self.dispatch(id, method, decode(params)?).await })
+        Box::pin(async move {
+            if id == "skills" && method == "catalog" {
+                return self.skill_catalog(params);
+            }
+            self.dispatch(id, method, decode(params)?).await
+        })
     }
     fn shutdown(&self) -> OptionalFuture<'_, ()> {
         Box::pin(async move {

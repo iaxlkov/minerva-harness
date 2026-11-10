@@ -485,9 +485,11 @@ impl ProviderService {
         let mut dynamic_tools = Vec::new();
         let mut step_hook = None;
         let mut identity_hook = crate::tools::AdmittedTools::default().identity_hook();
+        let mut image_generation_admitted = false;
         let streaming = run.is_some();
         let cancellation = run.as_ref().map(|r| r.tool_context.cancellation.clone());
         if let Some(mut run) = run {
+            image_generation_admitted = run.tools.definitions().iter().any(|tool| tool.name == "generate_image");
             run.tool_context.sink = Some(Arc::new(hook.clone()));
             dynamic_tools = run.tools.rig_tools(run.tool_context.clone());
             identity_hook = run.tools.identity_hook();
@@ -552,7 +554,8 @@ impl ProviderService {
                     }
                     Err("Provider stream ended without a final response".into())
                 };
-                let bounded = tokio::time::timeout(std::time::Duration::from_secs(90), drive);
+                let limit = if image_generation_admitted { 1080 } else { 90 };
+                let bounded = tokio::time::timeout(std::time::Duration::from_secs(limit), drive);
                 if let Some(cancellation) = cancellation {
                     tokio::select! {
                         result = bounded => result.map_err(|_| "Provider timed out".to_string())?,
@@ -841,7 +844,12 @@ mod tests {
                 write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
             });
             let dir = tempfile::tempdir().unwrap();
-            let service = ProviderService::new(dir.path().join("providers.json")).unwrap();
+            let service = ProviderService::new_with_store(
+                dir.path().join("providers.json"),
+                CredentialScope::new("wire-test").unwrap(),
+                Arc::new(crate::credential_store::MemoryCredentialStore::default()),
+                EndpointPolicy::Local,
+            ).unwrap();
             let id = format!("wiretest{}{}", std::process::id(), protocol);
             let base_url = if protocol == "anthropic-messages" {
                 format!("http://{address}")

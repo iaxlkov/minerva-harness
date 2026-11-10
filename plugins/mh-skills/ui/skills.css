@@ -1,0 +1,9 @@
+.skills-catalog { display:grid; gap:12px; min-width:0; }
+.skills-toolbar,.skills-dialog-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.skills-toolbar { color:var(--muted-foreground); }
+.skills-card { padding:14px; border:1px solid var(--border); border-radius:8px; min-width:0; overflow-wrap:anywhere; }
+.skills-card p { margin:6px 0; white-space:pre-wrap; }
+.skills-card small,.skills-access { display:block; color:var(--muted-foreground); margin-top:6px; font-size:12px; }
+.skills-dialog { position:fixed; z-index:101; left:50%; top:50%; transform:translate(-50%,-50%); width:min(680px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); overflow:auto; padding:24px; border:1px solid var(--border); border-radius:12px; background:var(--background); box-shadow:0 16px 64px #0006; }
+.skills-dialog-header h2 { margin:0; font-size:18px; overflow-wrap:anywhere; }
+.skills-dialog > p { color:var(--muted-foreground); margin:8px 0 20px; }

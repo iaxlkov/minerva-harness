@@ -238,10 +238,7 @@ impl AdmittedTools {
                 .map_err(|e| format!("invalid tool input: {e}"))?;
             if tool.definition.side_effect {
                 match ctx.policy {
-                    PermissionPolicy::ReadOnly => {
-                        return Err("read-only policy denies side effects".into())
-                    }
-                    PermissionPolicy::Ask => {
+                    PermissionPolicy::ReadOnly | PermissionPolicy::Ask => {
                         emit("requires-approval", None)?;
                         let answer = ctx
                             .interactions

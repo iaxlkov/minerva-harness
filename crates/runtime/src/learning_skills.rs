@@ -29,7 +29,7 @@ impl SkillProjection for LearningSkills {
             .list(&access, &scope)
             .map_err(|e| e.to_string())?;
         if catalog.incomplete {
-            return Err("skill catalog incomplete".into());
+            eprintln!("skill catalog incomplete: {}", catalog.diagnostics.join("; "));
         }
         Ok(catalog
             .items

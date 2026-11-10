@@ -108,6 +108,25 @@ pub struct Host {
     lifecycle: tokio::sync::Mutex<()>,
 }
 impl Host {
+    /// Read only a generator's own data file, bounded before allocating.
+    pub fn read_plugin_file(&self, id: &str, path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        if !self.entries.contains_key(id) { return Err("Unknown plugin".into()); }
+        let base = self.config.join("plugins").join(".data").canonicalize().map_err(err)?;
+        let root = base.join(id).canonicalize().map_err(err)?;
+        if root.parent() != Some(base.as_path()) || root.file_name() != Some(std::ffi::OsStr::new(id)) {
+            return Err("Plugin data directory escapes its root".into());
+        }
+        let canonical = path.canonicalize().map_err(err)?;
+        let relative = canonical.strip_prefix(&root).map_err(|_| "Image path outside plugin data")?;
+        let dir = cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map_err(err)?;
+        let file = dir.open(relative).map_err(err)?;
+        let mut bytes = Vec::new();
+        let read_limit=limit.checked_add(1).ok_or("Invalid file size limit")?;
+        file.take(read_limit).read_to_end(&mut bytes).map_err(err)?;
+        if bytes.len() as u64 > limit { return Err("Image exceeds size limit".into()); }
+        Ok(bytes)
+    }
     /// Hosted mode is deliberately disabled until a sandbox execution provider is integrated.
     pub fn open(config: PathBuf, local: bool) -> Result<Self, String> {
         let composition = config::ConfigStore::open(&config)?.snapshot()?;

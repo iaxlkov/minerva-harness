@@ -2,6 +2,14 @@
 use minerva_runtime::{plugins::PluginManager, tools::*};
 use serde_json::{json, Value};
 use std::{path::Path, sync::Arc, time::Duration};
+#[derive(Default)]
+struct ImageEvents(std::sync::Mutex<Vec<Value>>);
+impl ToolEventSink for ImageEvents {
+    fn emit(&self, _: &ToolContext, _: &str, _: &Value, status: &str, result: Option<&Result<Value,String>>) -> Result<(),String> {
+        if status == "running" { if let Some(Ok(value))=result { self.0.lock().unwrap().push(value.clone()); } }
+        Ok(())
+    }
+}
 fn package(root: &Path, id: &str, available: bool, fail: bool) {
     let source = root.join(id);
     std::fs::create_dir_all(&source).unwrap();
@@ -17,7 +25,7 @@ fn package(root: &Path, id: &str, available: bool, fail: bool) {
     std::fs::write(source.join("plugin.json"),json!({"id":id,"version":"1","apiVersion":1,"capabilities":["tools","image-generation"],"backend":{"kind":"process","entry":entry}}).to_string()).unwrap();
     std::fs::write(
         source.join("image-generator.json"),
-        json!({"available":available,"name":id,"fail":fail}).to_string(),
+        json!({"available":available,"name":id,"fail":fail,"reason":"fixture auth unavailable","probeDelayMs":if id=="test.slow" {3500}else{0}}).to_string(),
     )
     .unwrap();
     minerva_plugin_host::install_local(&source, &root.join("config")).unwrap();
@@ -42,8 +50,71 @@ fn starts(root: &Path, id: &str) -> usize {
     )
     .unwrap_or_default()
     .lines()
-    .filter(|s| serde_json::from_str::<Value>(s).unwrap()["method"] == "tools.start")
+    .filter(|s| { let v=serde_json::from_str::<Value>(s).unwrap(); v["method"] == "tools.start" && v["name"] == "generate_image" })
     .count()
+}
+#[tokio::test]
+async fn slow_probes_are_admitted_and_unavailable_reasons_are_visible() {
+    let root = tempfile::tempdir().unwrap();
+    package(root.path(), "test.slow", true, false);
+    package(root.path(), "test.offline", false, false);
+    let manager = Arc::new(
+        PluginManager::start(root.path().join("config/shell.json"))
+            .await
+            .unwrap(),
+    );
+    manager.set_enabled("test.offline", true).await.unwrap();
+    let tools = manager.tools_for("s").await.unwrap();
+    let error = tools
+        .execute(
+            "generate_image",
+            json!({"prompt":"one image"}),
+            context(&manager, "unavailable"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("test.offline: fixture auth unavailable"),
+        "{error}"
+    );
+    assert_eq!(starts(root.path(), "test.offline"), 0);
+    manager.set_enabled("test.slow", true).await.unwrap();
+    let tools = manager.tools_for("s").await.unwrap();
+    let result = tools
+        .execute(
+            "generate_image",
+            json!({"prompt":"one image"}),
+            context(&manager, "slow"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["generatorId"], "test.slow");
+}
+#[tokio::test]
+async fn cancellation_preserves_job_identity_without_resubmission_and_paths_are_confined() {
+    let root=tempfile::tempdir().unwrap();
+    package(root.path(),"test.image-b",true,false);
+    let manager=Arc::new(PluginManager::start(root.path().join("config/shell.json")).await.unwrap());
+    manager.set_enabled("test.image-b",true).await.unwrap();
+    let tools=manager.tools_for("s").await.unwrap();
+    let events=Arc::new(ImageEvents::default());
+    let mut ctx=context(&manager,"cancel-image");ctx.sink=Some(events.clone());
+    let worker=ctx.clone();
+    let task=tokio::spawn(async move {tools.execute("generate_image",json!({"prompt":"one image"}),worker).await});
+    tokio::time::timeout(Duration::from_secs(5),async {loop {if !events.0.lock().unwrap().is_empty(){break;} tokio::time::sleep(Duration::from_millis(10)).await;}}).await.unwrap();
+    assert_eq!(events.0.lock().unwrap()[0]["jobId"],"fixture-image");
+    ctx.cancellation.cancel();
+    assert!(task.await.unwrap().is_err());
+    assert_eq!(starts(root.path(),"test.image-b"),1);
+    let host=minerva_plugin_host::Host::open(root.path().join("config"),true).unwrap();
+    let outside=root.path().join("outside.png");std::fs::write(&outside,b"private").unwrap();
+    assert!(host.read_plugin_file("test.image-b",&outside,1024).is_err());
+    assert!(host.read_plugin_file("../test.image-b",&outside,1024).is_err());
+    let inside=root.path().join("config/plugins/.data/test.image-b/sample.png");std::fs::write(&inside,b"1234").unwrap();
+    assert_eq!(host.read_plugin_file("test.image-b",&inside,4).unwrap(),b"1234");
+    assert!(host.read_plugin_file("test.image-b",&inside,3).is_err());
+    assert!(host.read_plugin_file("test.image-b",&inside,u64::MAX).is_err());
+    manager.shutdown().await;
 }
 #[tokio::test]
 async fn image_generators_are_extensible_and_never_silently_fall_back() {
@@ -72,6 +143,10 @@ async fn image_generators_are_extensible_and_never_silently_fall_back() {
         .await
         .unwrap();
     assert_eq!(single["generatorId"], "test.image-b");
+    assert_eq!(single["status"], "completed");
+    let attachment=single["attachment"]["id"].as_str().unwrap();
+    assert!(manager.harness.context.get_attachment("s", attachment).is_ok());
+    assert!(manager.harness.context.get_attachment("other", attachment).is_err());
     assert!(manager.harness.interactions.list("s").is_empty());
     let status = tools
         .execute(
@@ -84,7 +159,7 @@ async fn image_generators_are_extensible_and_never_silently_fall_back() {
     let status = tools
         .execute(
             "image_status",
-            json!({"generatorId":single["generatorId"],"jobId":single["jobId"]}),
+            json!({"generatorId":single["generatorId"],"jobId":"fixture-image"}),
             context(&manager, "status"),
         )
         .await

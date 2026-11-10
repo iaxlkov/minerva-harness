@@ -51,6 +51,9 @@ fn main() {
         if method == "images.available" {
             let result: Value =
                 serde_json::from_slice(&std::fs::read("image-generator.json").unwrap()).unwrap();
+            if let Some(delay) = result["probeDelayMs"].as_u64() {
+                std::thread::sleep(std::time::Duration::from_millis(delay.min(10_000)));
+            }
             println!(
                 "{}",
                 json!({"jsonrpc":"2.0","id":request["id"],"result":result})
@@ -213,7 +216,7 @@ impl FixtureTools {
         writeln!(
             file,
             "{}",
-            json!({"method":method,"runId":params["runId"],"callId":params["callId"]})
+            json!({"method":method,"name":params["name"],"runId":params["runId"],"callId":params["callId"]})
         )
         .map_err(|e| e.to_string())
     }
@@ -257,8 +260,14 @@ impl FixtureTools {
                             .unwrap();
                     let result = if config["fail"] == true {
                         json!({"status":"failed","error":"Selected generator failed"})
-                    } else {
+                    } else if name == "generate_image" {
                         json!({"status":"completed","output":{"jobId":"fixture-image","status":if name=="generate_image" {"running"}else{"completed"}}})
+                    } else {
+                        let dir = self.data_dir.as_ref().unwrap().join("images/fixture-image");
+                        std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+                        let path = dir.join("generated.png");
+                        std::fs::write(&path, include_bytes!("../../../../apps/web/public/minerva-64.png")).map_err(|e|e.to_string())?;
+                        json!({"status":"completed","output":{"status":"completed","path":path,"mimeType":"image/png"}})
                     };
                     self.jobs.insert(
                         key,

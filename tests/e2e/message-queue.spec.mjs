@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {build} from 'esbuild';
+import {readFile} from 'node:fs/promises';
 import {viteWorkerStub} from './vite-worker-stub.mjs';
 
 test('queue keeps files, sends FIFO and removes pending messages',async({page},info)=>{
@@ -7,12 +8,15 @@ test('queue keeps files, sends FIFO and removes pending messages',async({page},i
  import React from 'react';import {createRoot} from 'react-dom/client';
  import {AssistantRuntimeProvider,useLocalRuntime,ComposerPrimitive} from '@assistant-ui/react';
  import {PluginRoot,createBrowserComposition,UiSlot,workspaceScope} from './apps/web/src/app/plugins';
- import {messageQueueOptions} from './apps/web/src/plugins/message-queue';
+ import {attachmentAdapter} from './apps/web/src/harness/attachments';
+ import {messageQueueOptions,QueueComposerRoot,QueueComposerSend} from './plugins/mh-message-queue/ui';
  window.sent=[];window.finish=()=>{};
- function App(){const runtime=useLocalRuntime({async run({messages}){window.sent.push(messages.at(-1));await new Promise(resolve=>window.finish=resolve);return {content:[{type:'text',text:'Done'}]};}}, {...messageQueueOptions,adapters:{attachments:{accept:'*',async add({file}){return {id:file.name,type:'file',name:file.name,file,contentType:file.type,status:{type:'requires-action',reason:'composer-send'}};},async send(a){return {...a,status:{type:'complete'},content:[{type:'file',data:'proof',mimeType:'text/plain',filename:a.name}]};},async remove(){}}}});return <AssistantRuntimeProvider runtime={runtime}><ComposerPrimitive.Root><UiSlot slot="composer.queue" scope={workspaceScope} componentProps={{}}/><ComposerPrimitive.Input aria-label="Message"/><ComposerPrimitive.AddAttachment>Attach</ComposerPrimitive.AddAttachment><ComposerPrimitive.Send>Send</ComposerPrimitive.Send></ComposerPrimitive.Root></AssistantRuntimeProvider>}
+ function App(){const runtime=useLocalRuntime({async run({messages,abortSignal}){window.sent.push(messages.at(-1));await new Promise(resolve=>{window.finish=resolve;abortSignal.addEventListener('abort',resolve,{once:true});});return {content:[{type:'text',text:'Done'}]};}}, {...messageQueueOptions,adapters:{attachments:attachmentAdapter('queue-session',async(method,args)=>{if(method!=='attachments.put')throw Error(method);window.upload=args;return {id:'stored-file',name:args.name,mimeType:args.mimeType,bytes:9};})}});return <AssistantRuntimeProvider runtime={runtime}><QueueComposerRoot><UiSlot slot="composer.queue" scope={workspaceScope} componentProps={{}}/><ComposerPrimitive.Input aria-label="Message"/><ComposerPrimitive.AddAttachment>Attach</ComposerPrimitive.AddAttachment><QueueComposerSend>Send</QueueComposerSend><ComposerPrimitive.Cancel>Stop</ComposerPrimitive.Cancel></QueueComposerRoot></AssistantRuntimeProvider>}
  createBrowserComposition().then(host=>createRoot(document.getElementById('root')).render(<PluginRoot host={host}><App/></PluginRoot>));
  `},bundle:true,format:'esm',write:false,loader:{'.css':'empty'}});
- await page.route('http://queue.test/**',route=>route.fulfill({contentType:'text/html',body:`<div id="root"></div><script type="module">${bundle.outputFiles[0].text}</script>`}));
+ const css=await readFile('plugins/mh-message-queue/ui/queue.css','utf8');
+ await page.setViewportSize({width:900,height:550});
+ await page.route('http://queue.test/**',route=>route.fulfill({contentType:'text/html',body:`<style>:root{--border:#454441;--secondary:#30302f;--muted-foreground:#aaa6a0;color:#e9e6e1;background:#1c1b1a;font:14px system-ui}#root{max-width:760px;margin:32px auto}button{color:inherit;background:#383631;border:1px solid #454441;border-radius:8px;padding:8px;cursor:pointer}${css}</style><div id="root"></div><script type="module">${bundle.outputFiles[0].text}</script>`}));
  await page.goto('http://queue.test');
  await page.getByLabel('Message').fill('First');await page.getByText('Send',{exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>window.sent.length)).toBe(1);
@@ -23,9 +27,29 @@ test('queue keeps files, sends FIFO and removes pending messages',async({page},i
  await page.getByLabel('Удалить из очереди').last().click();
  await expect(page.getByLabel('Очередь сообщений')).not.toContainText('Remove me');
  await page.screenshot({path:info.outputPath('queue.png')});
+ await page.setViewportSize({width:390,height:844});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.screenshot({path:info.outputPath('queue-mobile.png')});
  await page.evaluate(()=>window.finish());
  await expect.poll(()=>page.evaluate(()=>window.sent.length)).toBe(2);
- expect(await page.evaluate(()=>window.sent[1].attachments[0].content[0].filename)).toBe('proof.txt');
+ expect(await page.evaluate(()=>window.sent[1].attachments[0].content[0].providerMetadata.minerva.attachment.id)).toBe('stored-file');
+ expect(await page.evaluate(()=>atob(window.upload.data))).toBe('file body');
+ await page.getByLabel('Message').fill('Third');await page.getByText('Send',{exact:true}).click();
+ await page.getByLabel('Message').fill('Fourth');await page.getByLabel('Message').press('Enter');
+ await page.getByText('Следующим',{exact:true}).last().click();
+ expect(await page.evaluate(()=>window.sent.length)).toBe(2);
+ await page.getByText('Stop',{exact:true}).click();
+ await expect(page.getByLabel('Очередь сообщений')).toContainText('Приостановлена');
+ expect(await page.evaluate(()=>window.sent.length)).toBe(2);
+ await page.getByLabel('Message').fill('Fifth');await page.getByText('Send',{exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>window.sent.length)).toBe(3);
+ expect(await page.evaluate(()=>window.sent[2].content[0].text)).toBe('Fourth');
+ await page.evaluate(()=>window.finish());
+ await expect.poll(()=>page.evaluate(()=>window.sent.length)).toBe(4);
+ expect(await page.evaluate(()=>window.sent[3].content[0].text)).toBe('Third');
+ await page.evaluate(()=>window.finish());
+ await expect.poll(()=>page.evaluate(()=>window.sent.length)).toBe(5);
+ expect(await page.evaluate(()=>window.sent[4].content[0].text)).toBe('Fifth');
  await page.evaluate(()=>window.finish());
  await expect(page.getByLabel('Очередь сообщений')).toHaveCount(0);
 });

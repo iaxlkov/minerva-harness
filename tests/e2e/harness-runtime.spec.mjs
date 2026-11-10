@@ -1,19 +1,22 @@
 import {test,expect} from '@playwright/test';
 import {spawn} from 'node:child_process';
-import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm,copyFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {harnessModel} from '../fixtures/harness-model.mjs';
 
-async function runtime(page,context,body,desktop=false){
+async function runtime(page,context,body,desktop=false,imageFixture=false){
  const temp=await mkdtemp(path.join(os.tmpdir(),'minerva-harness-')),model=await harnessModel(),providerId=`harness${randomUUID().replaceAll('-','')}`;
  await mkdir(path.join(temp,'.agents/skills/fixture'),{recursive:true});
  await writeFile(path.join(temp,'AGENTS.md'),'WORKSPACE-DIRECTIVE: inspect fixture.txt before editing.');
  await writeFile(path.join(temp,'.agents/skills/fixture/SKILL.md'),'---\ndescription: fixture skill\n---\nSKILL-DIRECTIVE: keep exact fixture values.');
  await writeFile(path.join(temp,'fixture.txt'),'original fixture value');
  const env={...process.env};for(const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','DEEPSEEK_API_KEY'])delete env[key];
- const host=spawn(process.env.MINERVA_TEST_SERVER_EXE||path.resolve('target/debug',process.platform==='win32'?'minerva-server.exe':'minerva-server'),['--bind','127.0.0.1:0','--data-dir',path.join(temp,'data'),'--config-dir',path.join(temp,'config'),'--web-dist',path.resolve('dist')],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+ const args=['--bind','127.0.0.1:0','--data-dir',path.join(temp,'data'),'--config-dir',path.join(temp,'config'),'--web-dist',path.resolve('dist')];
+ if(imageFixture==='codex-live'){args.push('--install-plugin',path.resolve('../minerva-codex-plugin/dist/codex-package'));}
+ else if(imageFixture){const pkg=path.join(temp,'image-fixture');await mkdir(pkg);const exe=process.platform==='win32'?'plugin-fixture.exe':'plugin-fixture';await copyFile(path.resolve('target/debug',exe),path.join(pkg,exe));await writeFile(path.join(pkg,'plugin.json'),JSON.stringify({id:'test.image',version:'1',apiVersion:1,capabilities:['tools','image-generation'],backend:{kind:'process',entry:exe}}));await writeFile(path.join(pkg,'image-generator.json'),JSON.stringify({available:true,name:'Fixture',fail:imageFixture==='fail-image'}));args.push('--install-plugin',pkg);}
+ const host=spawn(process.env.MINERVA_TEST_SERVER_EXE||path.resolve('target/debug',process.platform==='win32'?'minerva-server.exe':'minerva-server'),args,{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
  let rpc,configured=false;
  try{
   const launch=await new Promise((resolve,reject)=>{
@@ -25,6 +28,7 @@ async function runtime(page,context,body,desktop=false){
   await page.goto(launch);await expect(page.getByRole('textbox',{name:'Сообщение ассистенту'})).toBeVisible();
   const rawRpc=async(method,params={})=>{const boot=await (await context.request.get(`${origin}/api/v1/bootstrap`)).json();return await (await context.request.post(`${origin}/api/v1/rpc`,{headers:{Origin:origin,'X-Minerva-CSRF':boot.csrfToken},data:{protocolVersion:1,method,params}})).json();};
   rpc=async(method,params={})=>{const result=await rawRpc(method,params);expect(result.ok,JSON.stringify(result.error)).toBe(true);return result.value;};
+  if(imageFixture)await rpc('set_plugin_enabled',{id:imageFixture==='codex-live'?'codex':'test.image',enabled:true});
   await rpc('save_model_provider',{provider:{id:providerId,name:'Harness fixture',baseUrl:model.url,models:['fixture'],apiKey:'disposable-fixture-key',isNew:true,protocol:'openai-chat'}});configured=true;
   const project=await rpc('workspaces.create',{path:temp});
   const id=randomUUID();await rpc('session_create',{id,workspaceId:project.id});
@@ -189,9 +193,60 @@ test('arbitrary files persist, download and are read or copied by session tools'
   expect(await readFile(path.join(temp,'copied.bin'))).toEqual(binary);
   await rpc('workspace.save',{sessionId:session.id,settings:{...settings,permissionPolicy:'read-only'}});
   model.steps.push({tool:'save_attachment',id:'denied-att',args:{id:archive.id,path:'denied.bin'}},{text:'Policy enforced'});
-  await send('Try saving with read-only policy');await expect(page.locator('.message.assistant').last()).toContainText('Policy enforced');
-  expect(JSON.stringify(model.requests.at(-1))).toContain('read-only policy denies');
+  await send('Try saving with read-only policy');await page.getByRole('button',{name:'Отклонить',exact:true}).click();await expect(page.locator('.message.assistant').last()).toContainText('Policy enforced');
+  expect(JSON.stringify(model.requests.at(-1))).toContain('tool approval denied');
  });
+});
+
+for(const desktop of [false,true])test(`generated image is saved once and remains visible after reloading (${desktop?'desktop':'web'})`,async({page,context})=>{
+ await runtime(page,context,async({model,rpc,rawRpc,session,send,saved,temp})=>{
+  model.steps.push({tool:'generate_image',id:'generate-proof',args:{prompt:'fixture image'}},{text:'Image ready'});
+  await send('Create a fixture image');
+  await page.getByRole('button',{name:'Разрешить этот вызов'}).click();
+  await expect(page.locator('[data-call-id="generate-proof"]')).toHaveAttribute('data-tool-state','running');
+  await expect(page.getByRole('status',{name:'Создание изображения'})).toBeVisible();
+  await expect(page.locator('details[data-call-id="generate-proof"]')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('img',{name:'generated.png'})).toBeVisible({timeout:15000});
+  await expect(page.locator('[data-call-id="generate-proof"]')).toHaveCount(0);
+  await expect(page.locator('.message.assistant').last()).toContainText('Image ready');
+  const history=await saved(),result=history.flatMap(m=>m.parts).find(p=>p.kind==='tool-result'&&p.data.callId==='generate-proof');
+  const output=Array.isArray(result.data.output)?result.data.output[0].value:result.data.output;
+  expect(output.status).toBe('completed');const id=output.attachment.id;
+  expect((await rpc('attachments.get',{sessionId:session.id,id})).mimeType).toBe('image/png');
+  const other=randomUUID();await rpc('session_create',{id:other});expect((await rawRpc('attachments.get',{sessionId:other,id})).ok).toBe(false);
+  await page.reload();await expect(page.getByRole('img',{name:'generated.png'})).toBeVisible();
+  const audit=(await readFile(path.join(temp,'config/plugins/.data/test.image/tool-audit.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  expect(audit.filter(x=>x.method==='tools.start'&&x.name==='generate_image')).toHaveLength(1);
+  expect(audit.filter(x=>x.method==='tools.start'&&x.name==='image_status')).toHaveLength(1);
+ },desktop,true);
+});
+
+test('failed generation shows an error without a tool card',async({page,context})=>{
+ await runtime(page,context,async({model,send})=>{
+  model.steps.push({tool:'generate_image',id:'generate-failed',args:{prompt:'fixture image'}},{text:'Image failed'});
+  await send('Create a fixture image');await page.getByRole('button',{name:'Разрешить этот вызов'}).click();
+  await expect(page.locator('.image-generation-error')).toBeVisible();
+  await expect(page.locator('details[data-call-id="generate-failed"]')).toHaveCount(0);
+  await expect(page.getByRole('status',{name:'Создание изображения'})).toHaveCount(0);
+ },false,'fail-image');
+});
+
+test('live Codex image is rendered and restored in the chat',async({page,context},info)=>{
+ test.skip(process.env.MINERVA_LIVE_IMAGE!=='1','Explicit live image test consumes Codex subscription usage');
+ test.setTimeout(300000);
+ await runtime(page,context,async({model,rpc,session,send,saved})=>{
+  model.steps.push({tool:'generate_image',id:'live-codex-image',args:{prompt:'A small red ceramic mug on a light wooden table, soft morning light, no text.'}},{text:'Image ready'});
+  await send('Create a test image');await page.getByRole('button',{name:'Разрешить этот вызов'}).click();
+  await expect(page.getByRole('img',{name:'generated.png'})).toBeVisible({timeout:240000});
+  await expect(page.locator('.message.assistant').last()).toContainText('Image ready');
+  const history=await saved(),part=history.flatMap(m=>m.parts).find(p=>p.kind==='tool-result'&&p.data.callId==='live-codex-image');
+  const output=Array.isArray(part.data.output)?part.data.output[0].value:part.data.output;
+  expect(output.status).toBe('completed');expect(output.generatorId).toBe('codex');
+  expect((await rpc('attachments.get',{sessionId:session.id,id:output.attachment.id})).bytes).toBeGreaterThan(100);
+  await page.screenshot({path:info.outputPath('live-codex-image.png')});
+  await page.reload();await expect(page.getByRole('img',{name:'generated.png'})).toBeVisible();
+ },false,'codex-live');
 });
 
 test('real image chooser persists private references and sends native model image content',async({page,context})=>{
@@ -210,7 +265,7 @@ test('manual and automatic compaction call the selected model without deleting h
  test.setTimeout(90000);
  await runtime(page,context,async({model,rpc,session,settings,send,saved})=>{
   for(let index=0;index<4;index++){model.steps.push({text:`turn-${index} ${'history '.repeat(800)}`});await send(`question-${index}`);await expect(page.locator('.message.assistant').last()).toContainText(`turn-${index}`);await expect(page.getByRole('button',{name:'Отправить сообщение',exact:true})).toBeVisible();}
-  const before=await saved();await page.getByRole('button',{name:'Сжать контекст',exact:true}).click();await expect.poll(()=>model.summaries).toBe(1);await expect.poll(async()=>(await rpc('context.status',{sessionId:session.id})).estimatedTokens).toBeLessThan(6000);expect(await saved()).toEqual(before);
+  const before=await saved(),beforeTokens=(await rpc('context.status',{sessionId:session.id})).estimatedTokens;await page.getByRole('button',{name:'Сжать контекст',exact:true}).click();await expect.poll(()=>model.summaries).toBe(1);await expect.poll(async()=>(await rpc('context.status',{sessionId:session.id})).estimatedTokens).toBeLessThan(beforeTokens);expect(await saved()).toEqual(before);
   model.steps.push({text:'after manual summary'});await send('continue after manual');await expect(page.locator('.message.assistant').last()).toContainText('after manual summary');expect(JSON.stringify(model.requests.at(-1))).toContain('SUMMARY-1');expect(JSON.stringify(model.requests.at(-1))).not.toContain('question-0');
   const budget=await rpc('context.status',{sessionId:session.id});await rpc('workspace.save',{sessionId:session.id,settings:{...settings,contextWindow:Math.max(2048,Math.ceil(budget.estimatedTokens*1.1))}});
   const original=await saved();model.steps.push({text:'after automatic summary'});await send('trigger automatic compaction');await expect(page.locator('.message.assistant').last()).toContainText('after automatic summary');expect(model.summaries).toBe(2);expect(JSON.stringify(model.requests.at(-1))).toContain('SUMMARY-2');

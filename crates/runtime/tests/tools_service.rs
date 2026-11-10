@@ -39,14 +39,36 @@ async fn write_requires_permission_and_paths_stay_contained() {
     register_native(&registry).unwrap();
     let admitted = registry.snapshot();
     let mut ctx = context(Some(dir.path().into()));
-    assert!(admitted
-        .execute(
-            "write_file",
-            json!({"path":"a.txt","content":"one"}),
-            ctx.clone()
-        )
-        .await
-        .is_err());
+    let task = tokio::spawn({
+        let admitted = admitted.clone();
+        let ctx = ctx.clone();
+        async move {
+            admitted
+                .execute(
+                    "write_file",
+                    json!({"path":"a.txt","content":"one"}),
+                    ctx.clone(),
+                )
+                .await
+        }
+    });
+    let pending = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = ctx.interactions.list("session").pop() {
+                break item;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(ctx.interactions.answer(InteractionAnswer {
+        session_id: "session".into(),
+        id: pending.id,
+        decision: "deny".into(),
+        answer: None
+    }));
+    assert!(task.await.unwrap().is_err());
     assert!(!dir.path().join("a.txt").exists());
     ctx.policy = PermissionPolicy::Allow;
     admitted
@@ -148,6 +170,54 @@ fn context(cwd: Option<std::path::PathBuf>) -> ToolContext {
         cancellation: Cancellation::default(),
         interactions: Arc::new(InteractionBroker::default()),
         sink: None,
+    }
+}
+#[tokio::test]
+async fn restricted_calls_wait_for_one_time_approval() {
+    for policy in [PermissionPolicy::ReadOnly, PermissionPolicy::Ask] {
+        for decision in ["allow", "deny"] {
+            let registry = ToolRegistry::default();
+            let executed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = executed.clone();
+            registry
+                .register("test", definition("change", true), move |_, _| {
+                    let flag = flag.clone();
+                    Box::pin(async move {
+                        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        Ok(json!({}))
+                    })
+                })
+                .unwrap();
+            let mut ctx = context(None);
+            ctx.policy = policy;
+            let broker = ctx.interactions.clone();
+            let task =
+                tokio::spawn(
+                    async move { registry.snapshot().execute("change", json!({}), ctx).await },
+                );
+            let pending = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Some(item) = broker.list("session").pop() {
+                        break item;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(!executed.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(broker.answer(InteractionAnswer {
+                session_id: "session".into(),
+                id: pending.id,
+                decision: decision.into(),
+                answer: None
+            }));
+            assert_eq!(task.await.unwrap().is_ok(), decision == "allow");
+            assert_eq!(
+                executed.load(std::sync::atomic::Ordering::SeqCst),
+                decision == "allow"
+            );
+        }
     }
 }
 #[tokio::test]

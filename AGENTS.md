@@ -1,6 +1,9 @@
 <!-- Ponytail 5.3.3, DietrichGebert/ponytail @ 96608e078b2d5ea607c5c3b8b5a54d1c1fba6846.
      MIT; see .agents/PONYTAIL-LICENSE. Upstream rules below are unchanged. -->
 
+Project instructions in [AGENTS-ollie.md](AGENTS-ollie.md) take priority over
+the guidance below where they conflict. Apply the guidance below otherwise.
+
 Project-local skills live in `.agents/skills`. Invoke `$ponytail`,
 `$ponytail-review`, `$ponytail-audit`, `$ponytail-debt`, `$ponytail-gain`
 or `$ponytail-help` without the plugin namespace. This is the rules-and-skills
@@ -39,3 +42,10 @@ Take the first option that fully works:
 Never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, anything the user asked for.
 
 (Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)
+
+## Additional engineering guidance
+
+- Bound input sizes and loops, and handle invalid or unreadable input explicitly.
+- Keep side effects contained and preserve the distinction between an absent value and a read error.
+- For concurrent components, stop producers and join workers before releasing resources they use.
+- State which checks were actually run; do not claim unverified runtime behavior.
