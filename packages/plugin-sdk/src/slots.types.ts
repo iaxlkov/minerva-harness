@@ -14,6 +14,7 @@ export const slotDeclarations = {
   'navigation.items': { kind: 'list', scope: 'workspace' },
   'settings.pages': { kind: 'keyed', scope: 'workspace' },
   'conversation.views': { kind: 'keyed', scope: 'session' },
+  'composer.queue': { kind: 'list', scope: 'workspace' },
   'composer.actions': { kind: 'list', scope: 'session' },
   'composer.menu': { kind: 'list', scope: 'workspace' },
   'message.renderers': { kind: 'keyed', scope: 'session' },

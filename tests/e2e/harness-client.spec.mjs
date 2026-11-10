@@ -10,7 +10,7 @@ async function mount(page,contents,request){
 }
 test('workspace menu exposes its target to plugins and removes contributions on disable',async({page})=>{
  await mount(page,`
- import {WorkspaceMenu} from './apps/web/src/plugins/workspaces/WorkspaceMenu';
+ import {WorkspaceMenu} from './plugins/mh-workspaces/ui/WorkspaceMenu';
  import {DropdownMenuItem} from './apps/web/src/components/ui/dropdown-menu';
  import {PluginRoot,workspaceScope,createBrowserComposition} from './apps/web/src/app/plugins';
  const host=await createBrowserComposition();

@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useId,useRef,useState,type ReactNode} from 'react';
 import {useAui,useAuiEvent} from '@assistant-ui/react';
-import {Paperclip,Plus} from 'lucide-react';
-import {Button} from '../components/ui/button';
+import {Paperclip} from 'lucide-react';
+import {ComposerAttachButton} from '../components/assistant-ui/elements/composer';
 import {ComposerMenu,ComposerMenuItem} from '../components/assistant-ui/composer-menu';
 export function AttachmentPicker({disabled=false,renderMenu}:{disabled?:boolean;renderMenu?:(onClose:()=>void)=>ReactNode}){
  const aui=useAui(),input=useRef<HTMLInputElement>(null);
@@ -16,7 +16,7 @@ export function AttachmentPicker({disabled=false,renderMenu}:{disabled?:boolean;
    const files=Array.from(event.target.files??[]);event.target.value='';setError('');
    for(const file of files)void aui.composer().addAttachment(file).catch(failed);
   }}/>
-  <Button ref={trigger} type="button" variant="ghost" size="icon" disabled={disabled} aria-label="Добавить вложение" aria-haspopup="menu" aria-expanded={open&&!disabled} aria-controls={open&&!disabled?menuId:undefined} className="composer-add-trigger" onClick={()=>setOpen(value=>!value)} onKeyDown={event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();setOpen(true);}}}><Plus size={18}/></Button>
+  <ComposerAttachButton ref={trigger} disabled={disabled} aria-label="Добавить вложение" aria-haspopup="menu" aria-expanded={open&&!disabled} aria-controls={open&&!disabled?menuId:undefined} onClick={()=>setOpen(value=>!value)} onKeyDown={event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();setOpen(true);}}}/>
   <ComposerMenu id={menuId} aria-label="Вложения и действия" open={open&&!disabled} onClose={close} triggerRef={trigger}>
    <ComposerMenuItem disabled={disabled} onClick={()=>{setError('');input.current?.click();}}><Paperclip size={16}/> Прикрепить файл</ComposerMenuItem>
    {renderMenu?.(close)}

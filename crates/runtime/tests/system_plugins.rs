@@ -4,6 +4,7 @@ use std::{path::PathBuf, time::Duration};
 
 const SYSTEM: &[&str] = &[
     "plugin-manager",
+    "message-queue",
     "providers",
     "shell",
     "tool-runtime",
@@ -25,7 +26,8 @@ async fn system_plugins_are_listed_and_cannot_be_disabled_or_paused() {
             .map(|p| serde_json::to_value(p).unwrap())
             .find(|p| p["id"] == *id)
             .unwrap_or_else(|| panic!("missing system plugin {id}"));
-        assert_eq!(entry["enabled"], true, "{id}");
+        // Queue availability follows the session service, absent in this manager-only fixture.
+        assert_eq!(entry["enabled"], *id != "message-queue", "{id}");
         assert_eq!(entry["canToggle"], false, "{id}");
         assert_eq!(entry["origin"], "builtin", "{id}");
         assert!(manager.set_enabled(id, false).await.is_err());
@@ -36,7 +38,7 @@ async fn system_plugins_are_listed_and_cannot_be_disabled_or_paused() {
         .map(|p| serde_json::to_value(p).unwrap())
         .filter(|p| SYSTEM.contains(&p["id"].as_str().unwrap()))
     {
-        assert_eq!(entry["enabled"], true);
+        assert_eq!(entry["enabled"], entry["id"] != "message-queue");
     }
     manager.shutdown().await;
 }
@@ -84,7 +86,7 @@ async fn system_mcp_keeps_real_connections_when_optional_plugins_are_paused() {
         .await
         .unwrap();
     manager.harness.mcp.save(serde_json::from_value(json!({"id":"system-proof","enabled":true,"transport":{"kind":"stdio","command":"node","args":[
-        concat!(env!("CARGO_MANIFEST_DIR"), "/src/mcp/fixture.cjs"), "stdio", dir.path().join("calls.log").to_str().unwrap()
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/mh-mcp/src/fixture.cjs"), "stdio", dir.path().join("calls.log").to_str().unwrap()
     ]}})).unwrap()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while manager.harness.mcp.list()[0].state != "connected" {

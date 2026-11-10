@@ -14,6 +14,7 @@ use std::{
 /// Built-in mandatory plugins share their protected namespace with installed packages.
 pub const SYSTEM_PLUGIN_IDS: &[&str] = &[
     "plugin-manager",
+    "message-queue",
     "providers",
     "shell",
     "tool-runtime",

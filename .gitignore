@@ -4,6 +4,7 @@ dist/
 target/
 src-tauri/gen/
 agent-artifacts/
+.playwright-cli/
 diagnostics/
 releases/
 *.log

@@ -1,0 +1,18 @@
+[package]
+name = "mh-context"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minerva-plugin-sdk = { path = "../../crates/plugin-sdk" }
+mh-sessions = { path = "../mh-sessions" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+cordis-rs = "=0.11.1"
+serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+cap-std = "3"
+[dev-dependencies]
+tempfile = "3"
+rig-core = { version = "0.46.0", default-features = false, features = ["reqwest", "rustls"] }

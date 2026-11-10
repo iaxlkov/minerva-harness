@@ -220,7 +220,7 @@ test('manual and automatic compaction call the selected model without deleting h
 
 test('real MCP process registers model tools and executes only after user approval',async({page,context})=>{
  await runtime(page,context,async({temp,model,rpc,session,send})=>{
-  const log=path.join(temp,'mcp.log');await rpc('mcp.save',{server:{id:'fixture',enabled:true,transport:{kind:'stdio',command:process.execPath,args:[path.resolve('crates/runtime/src/mcp/fixture.cjs'),'stdio',log]}}});
+  const log=path.join(temp,'mcp.log');await rpc('mcp.save',{server:{id:'fixture',enabled:true,transport:{kind:'stdio',command:process.execPath,args:[path.resolve('plugins/mh-mcp/src/fixture.cjs'),'stdio',log]}}});
   await expect.poll(async()=>(await rpc('mcp.list'))[0]?.state).toBe('connected');
   const tools=await rpc('tools.list',{sessionId:session.id}),tool=tools.find(tool=>tool.name.includes('fixture')&&tool.name.endsWith('echo'));expect(tool).toBeTruthy();
   model.steps.push({tool:tool.name,id:'mcp-exact',args:{text:'actual MCP process result'}},{text:'MCP workflow complete'});await send('call MCP fixture');await expect(page.locator('.harness-interaction')).toContainText(tool.name);await expect(readFile(log,'utf8').catch(()=>'' )).resolves.toBe('');await page.getByRole('button',{name:'Разрешить этот вызов'}).click();await expect(page.locator('.message.assistant')).toContainText('MCP workflow complete');

@@ -1,0 +1,17 @@
+[package]
+name = "mh-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mh-workspaces = { path = "../mh-workspaces" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+cordis-rs = "=0.11.1"
+futures-util = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util", "fs"] }
+tokio-lsp-client = { git = "https://github.com/kviron/minerva-harness-tokio-lsp-client", rev = "71e08aa", version = "0.0.1" }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

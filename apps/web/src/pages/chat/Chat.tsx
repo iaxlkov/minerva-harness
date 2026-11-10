@@ -1,3 +1,4 @@
+import {messageQueueOptions} from '../../plugins/message-queue';
 import {NavigationShell} from '../../app/NavigationShell';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {AttachmentPicker} from '../../harness/AttachmentPicker';
@@ -12,9 +13,10 @@ import {
   AssistantRuntimeProvider, useLocalRuntime, ThreadPrimitive, AuiIf,
   MessagePrimitive, ComposerPrimitive, type ChatModelAdapter,
 } from '@assistant-ui/react';
-import { ArrowUp } from 'lucide-react';
+import {ComposerBar, ComposerToolbar, ComposerActions, ComposerSend, ComposerModelTrigger} from '../../components/assistant-ui/elements/composer';
+import {useAuiState} from '@assistant-ui/react';
 import { Button } from '../../components/ui/button';
-import { Select, SelectGroup, SelectLabel, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
+import { Select, SelectGroup, SelectLabel, SelectTrigger, SelectContent, SelectItem } from '../../components/ui/select';
 import '../../style.css';
 import type { Provider, SessionInfo, PluginModel } from '../../../../../packages/client/src/types.ts';
 import { sessionHistory,decodeSessionMessage } from '../../sessionHistory';
@@ -38,6 +40,7 @@ function Message({ role }: { role: 'user' | 'assistant' }) {
 
 function Thread({ model, configured, providers, pluginModels, onSelect,remoteRunning,onRemoteCancel }: { model: string; configured: boolean; providers: Provider[]; pluginModels:PluginModel[];  onSelect:(value:string)=>void;remoteRunning?:boolean;onRemoteCancel?:()=>void }) {
   const scope=React.useContext(SessionScopeContext);
+  const idle=useAuiState(state=>!state.composer.text.trim()&&!state.composer.attachments.length);
   return <ThreadPrimitive.Root className="thread">
     <ScrollArea asChild><ThreadPrimitive.Viewport className="viewport">
       <AuiIf condition={(state) => state.thread.isEmpty}><div className="empty">
@@ -48,15 +51,15 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
       <div className="messages"><ThreadPrimitive.Messages>{({ message }) => <Message role={message.role === "user" ? "user" : "assistant"}/>}</ThreadPrimitive.Messages></div>
     </ThreadPrimitive.Viewport></ScrollArea>
     <div className="composer-wrap">
-      <ComposerPrimitive.Root className="composer">
-        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove asChild><Button type="button" variant="ghost" size="sm" aria-label={`Удалить ${attachment.name}`}>Удалить</Button></AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ScrollArea asChild><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="composer-input" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" /></ScrollArea>
-        <div className="composer-bottom">
+      <ComposerPrimitive.Root className="oe-relative">
+        <UiSlot slot="composer.queue" scope={workspaceScope} componentProps={{}}/>
+        <ComposerBar className="oe-bg-secondary">
+        <div className="harness-attachments"><ComposerPrimitive.Attachments>{({attachment})=><AttachmentPrimitive.Root className="harness-attachment"><AttachmentPrimitive.unstable_Thumb/><AttachmentPrimitive.Name/><AttachmentPrimitive.Remove asChild><Button type="button" variant="ghost" size="sm" aria-label={`Удалить ${attachment.name}`}>Удалить</Button></AttachmentPrimitive.Remove></AttachmentPrimitive.Root>}</ComposerPrimitive.Attachments></div><ScrollArea asChild><ComposerPrimitive.Input rows={1} disabled={!!remoteRunning} className="placeholder:oe-text-muted-foreground oe-min-h-11 oe-w-full oe-resize-none oe-text-foreground oe-border-0 oe-bg-transparent oe-px-3 oe-text-[15px] oe-outline-none focus-visible:oe-outline-none" placeholder="Напишите сообщение…" aria-label="Сообщение ассистенту" /></ScrollArea>
+        <ComposerToolbar>
           <AttachmentPicker disabled={!!remoteRunning} renderMenu={onClose=><UiSlot slot="composer.menu" scope={workspaceScope} componentProps={{sessionId:scope.kind==='session'?scope.sessionId:'',disabled:!!remoteRunning,onClose}}/>}/>
+          <ComposerActions>
           <Select value={model || '__none'} onValueChange={value => onSelect(value === '__none' ? '' : value)}>
-            <SelectTrigger className="composer-select" aria-label="Модель">
-              <span className={configured ? "status-dot" : "status-dot unavailable"} aria-hidden="true"/>
-              <SelectValue/>
-            </SelectTrigger>
+            <SelectTrigger asChild><ComposerModelTrigger model={model.replace(/^api:[^/]+\//, "") || "Выберите модель"} aria-label="Модель" /></SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="__none">Выберите модель</SelectItem>
               {providers.map(provider => <SelectGroup key={provider.id}>
@@ -66,11 +69,12 @@ function Thread({ model, configured, providers, pluginModels, onSelect,remoteRun
               {[...new Set(pluginModels.map(m=>m.group))].map(group=><SelectGroup key={`plugin:${group}`}><SelectLabel>{group}</SelectLabel>{pluginModels.filter(m=>m.group===group).map(m=><SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectGroup>)}
             </SelectContent>
           </Select>
-          <UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>!state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Send asChild><Button size="icon" className="send" aria-label="Отправить сообщение"><ArrowUp size={16}/></Button></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning&&!remoteRunning}><ComposerPrimitive.Cancel asChild><Button size="icon" className="send" aria-label="Остановить ответ">■</Button></ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><Button variant="ghost" className="send" aria-label="Остановить ответ" onClick={onRemoteCancel}>■</Button></AuiIf>
-        </div>
+          <UiSlot slot="composer.actions" scope={scope} componentProps={{model,onSelect}}/><AuiIf condition={state=>(!state.thread.isRunning||!idle)&&!remoteRunning}><ComposerPrimitive.Send asChild><ComposerSend streaming={false} idle={idle} aria-label="Отправить сообщение"/></ComposerPrimitive.Send></AuiIf><AuiIf condition={state=>state.thread.isRunning&&idle&&!remoteRunning}><ComposerPrimitive.Cancel asChild><ComposerSend streaming idle={false} aria-label="Остановить ответ"/></ComposerPrimitive.Cancel></AuiIf><AuiIf condition={()=>!!remoteRunning}><ComposerSend streaming idle={false} aria-label="Остановить ответ" onClick={onRemoteCancel}/></AuiIf>
+          </ComposerActions>
+        </ComposerToolbar>
+        </ComposerBar>
       </ComposerPrimitive.Root>
       {remoteRunning&&<AuiIf condition={state=>!state.thread.isRunning}><div role="status">Задача выполняется на сервере…</div></AuiIf>}
-      <div className="composer-hint">Enter — отправить <span>·</span> Shift + Enter — новая строка</div>
     </div>
   </ThreadPrimitive.Root>;
 }
@@ -90,7 +94,7 @@ function SessionChat({ model, configured, providers, pluginModels, onSelect, onP
       options:{}});
   }, [model, session.id, history]);
   const attachments=useMemo(()=>attachmentAdapter(session.id,invoke),[session.id]);
-  const runtime = useLocalRuntime(adapter,{adapters:{history,attachments}});
+  const runtime = useLocalRuntime(adapter,{...messageQueueOptions,adapters:{history,attachments}});
   const remote=useRemoteSession(session.id);
   useEffect(()=>{
     if(remote.status!=='ready')return;
@@ -104,7 +108,7 @@ function SessionChat({ model, configured, providers, pluginModels, onSelect, onP
   const cancelRemote=()=>{if(remote.activeRun)void invoke('runs.cancel',{sessionId:session.id,runId:remote.activeRun.runId}).catch(error=>onError(`Не удалось отменить задачу: ${String(error)}`));};
   return <SessionIdContext.Provider value={session.id}><SessionScopeContext.Provider value={sessionScope(session.id)}><AssistantRuntimeProvider runtime={runtime}>
 
-    <SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun} onRemoteCancel={cancelRemote}/>}/><UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
+    <SessionControls key={session.id} sessionId={session.id} running={running||!!remote.activeRun}/><UiSlot slot="conversation.views" scope={sessionScope(session.id)} entryId="default" componentProps={{session,model,configured,providers,pluginModels,onSelect}} fallback={<Thread model={model} configured={configured} providers={providers} pluginModels={pluginModels} onSelect={onSelect} remoteRunning={!!remote.activeRun&&!localRun.current} onRemoteCancel={cancelRemote}/>}/><UiSlot slot="workspace.panels" scope={workspaceScope} componentProps={{session}}/>
 
   </AssistantRuntimeProvider></SessionScopeContext.Provider></SessionIdContext.Provider>;
 }

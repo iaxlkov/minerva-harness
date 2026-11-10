@@ -1,0 +1,15 @@
+[package]
+name = "mh-workspace-tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mh-context = { path = "../mh-context" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+cordis-rs = "=0.11.1"
+serde_json = "1"
+base64 = "0.22"
+cap-std = "3"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"] }
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }

@@ -9,7 +9,7 @@ const SelectValue = SelectPrimitive.Value;
 const SelectGroup = SelectPrimitive.Group;
 function SelectLabel(props: React.ComponentProps<typeof SelectPrimitive.Label>) { return <SelectPrimitive.Label className="ds-select-label" {...props}/>; }
 function SelectTrigger({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
-  return <SelectPrimitive.Trigger data-slot="select-trigger" className={cn("ds-select-trigger", className)} {...props}>{children}<SelectPrimitive.Icon asChild><ChevronDown size={15}/></SelectPrimitive.Icon></SelectPrimitive.Trigger>;
+  return <SelectPrimitive.Trigger {...(!props.asChild&&{"data-slot":"select-trigger"})} className={cn(!props.asChild&&"ds-select-trigger", className)} {...props}>{props.asChild?children:<>{children}<SelectPrimitive.Icon asChild><ChevronDown size={15}/></SelectPrimitive.Icon></>}</SelectPrimitive.Trigger>;
 }
 function SelectContent({ children, className, ...props }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return <SelectPrimitive.Portal><SelectPrimitive.Content data-slot="select-content" position="popper" sideOffset={4} className={cn("oe-studio ds-select-content",className)} {...props}><ScrollArea asChild><SelectPrimitive.Viewport className="ds-select-viewport">{children}</SelectPrimitive.Viewport></ScrollArea></SelectPrimitive.Content></SelectPrimitive.Portal>;

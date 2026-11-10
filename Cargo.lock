@@ -2867,6 +2867,220 @@ dependencies = [
 ]
 
 [[package]]
+name = "mh-agent-loop"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "mh-plugin-manager",
+ "mh-sessions",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "mh-context"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "cap-std",
+ "cordis-rs",
+ "image",
+ "mh-sessions",
+ "mh-tool-runtime",
+ "minerva-plugin-sdk",
+ "rig-core",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mh-editor"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "cordis-rs",
+ "mh-tool-runtime",
+ "mh-workspace-tools",
+ "mh-workspaces",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
+name = "mh-lsp"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "futures-util",
+ "mh-tool-runtime",
+ "mh-workspaces",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-lsp-client",
+ "url",
+]
+
+[[package]]
+name = "mh-lsp-rust"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "mh-lsp",
+ "tokio",
+]
+
+[[package]]
+name = "mh-mcp"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "mh-runtime-support",
+ "mh-tool-runtime",
+ "minerva-plugin-sdk",
+ "reqwest 0.13.5",
+ "rmcp",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "mh-plugin-manager"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "mh-context",
+ "mh-editor",
+ "mh-lsp",
+ "mh-lsp-rust",
+ "mh-mcp",
+ "mh-providers",
+ "mh-runtime-support",
+ "mh-sessions",
+ "mh-shell",
+ "mh-tool-runtime",
+ "mh-workspace-tools",
+ "mh-workspaces",
+ "minerva-plugin-host",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "mh-providers"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "futures-util",
+ "mh-context",
+ "mh-runtime-support",
+ "mh-sessions",
+ "mh-tool-runtime",
+ "rig-agent",
+ "rig-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "mh-runtime-support"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "url",
+]
+
+[[package]]
+name = "mh-sessions"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "minerva-plugin-sdk",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ts-rs",
+]
+
+[[package]]
+name = "mh-shell"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "minerva-plugin-host",
+ "serde",
+ "tempfile",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "mh-tool-runtime"
+version = "0.1.0"
+dependencies = [
+ "cap-std",
+ "cordis-rs",
+ "jsonschema",
+ "libc",
+ "minerva-plugin-sdk",
+ "rig-agent",
+ "rig-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mh-workspace-tools"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "cap-std",
+ "cordis-rs",
+ "mh-context",
+ "mh-tool-runtime",
+ "serde_json",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mh-workspaces"
+version = "0.1.0"
+dependencies = [
+ "cordis-rs",
+ "mh-context",
+ "mh-sessions",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ts-rs",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2990,30 +3204,30 @@ dependencies = [
 name = "minerva-runtime"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
- "cap-std",
  "cordis-rs",
- "futures-util",
- "image",
- "jsonschema",
- "keyring",
- "libc",
+ "mh-agent-loop",
+ "mh-context",
+ "mh-editor",
+ "mh-lsp",
+ "mh-lsp-rust",
+ "mh-mcp",
+ "mh-plugin-manager",
+ "mh-providers",
+ "mh-runtime-support",
+ "mh-sessions",
+ "mh-shell",
+ "mh-tool-runtime",
+ "mh-workspace-tools",
+ "mh-workspaces",
  "minerva-plugin-host",
  "minerva-plugin-sdk",
- "reqwest 0.13.5",
  "rig-agent",
  "rig-core",
- "rmcp",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tempfile",
  "tokio",
- "tokio-lsp-client",
- "ts-rs",
- "url",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

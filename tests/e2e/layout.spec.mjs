@@ -55,8 +55,14 @@ for(const [width,height] of [[1280,800],[900,800],[700,800],[900,550]])test(`scr
  expect(thread.y).toBeGreaterThanOrEqual(budget.y+budget.height-1);
  expect(Math.abs(thread.x-budget.x)).toBeLessThan(1);
  expect(thread.width).toBeCloseTo(budget.width,0);
- const composer=await page.locator('.composer').boundingBox();
+ const composer=await page.locator('[data-slot="composer-bar"]').boundingBox();
  expect(composer.y+composer.height).toBeLessThanOrEqual(height);
+ const bar=page.locator('[data-slot="composer-bar"]');
+ const border=()=>bar.evaluate(el=>getComputedStyle(el).borderColor);
+ const initialBorder=await border();
+ await bar.locator('textarea').focus();
+ expect(await border()).toBe(initialBorder);
+ expect(await bar.evaluate(el=>getComputedStyle(el).borderRadius)).toBe('24px');
  await page.getByRole('button',{name:'Добавить вложение'}).click();
  const menu=page.getByRole('menu');
  await expect(menu).toBeVisible();

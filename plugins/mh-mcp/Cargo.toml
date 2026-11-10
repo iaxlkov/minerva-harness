@@ -1,0 +1,16 @@
+[package]
+name = "mh-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minerva-plugin-sdk = { path = "../../crates/plugin-sdk" }
+mh-runtime-support = { path = "../../crates/runtime-support" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+cordis-rs = "=0.11.1"
+rmcp = { version = "3.9.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"] }

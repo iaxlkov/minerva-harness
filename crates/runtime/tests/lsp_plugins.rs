@@ -23,7 +23,7 @@ async fn installed_language_plugin_follows_enable_and_pause_lifecycle() {
     std::fs::write(source.join("plugin.json"), json!({
         "id":"test.lang", "version":"1", "apiVersion":1,
         "backend":{"kind":"process", "entry":entry},
-        "languageServers":[{"id":"sample","command":"python","args":[concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mh_lsp_server.py")],"extensions":{".sample":"sample"}}]
+        "languageServers":[{"id":"sample","command":"python","args":[concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/mh-lsp/tests/fixtures/mh_lsp_server.py")],"extensions":{".sample":"sample"}}]
     }).to_string()).unwrap();
     let config = dir.path().join("config");
     minerva_plugin_host::install_local(&source, &config).unwrap();

@@ -1,0 +1,29 @@
+[package]
+name = "mh-plugin-manager"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mh-editor = { path = "../mh-editor" }
+minerva-plugin-sdk = { path = "../../crates/plugin-sdk" }
+minerva-plugin-host = { path = "../../crates/plugin-host" }
+mh-runtime-support = { path = "../../crates/runtime-support" }
+mh-sessions = { path = "../mh-sessions" }
+mh-context = { path = "../mh-context" }
+mh-tool-runtime = { path = "../mh-tool-runtime" }
+mh-workspace-tools = { path = "../mh-workspace-tools" }
+mh-workspaces = { path = "../mh-workspaces" }
+mh-providers = { path = "../mh-providers" }
+mh-shell = { path = "../mh-shell" }
+mh-mcp = { path = "../mh-mcp" }
+mh-lsp = { path = "../mh-lsp" }
+mh-lsp-rust = { path = "../mh-lsp-rust" }
+cordis-rs = "=0.11.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ts-rs = { version = "=12.0.1", features = ["serde-json-impl"] }
+sha2 = "0.10"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread", "process", "io-util"] }
+[dev-dependencies]
+tempfile = "3"
