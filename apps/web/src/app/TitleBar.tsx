@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Code2, Copy, Menu, MessageSquare, Minus, PanelLeft, Square, X } from "lucide-react";
+import { Code2, Copy, Menu, MessageSquare, Minus, MoreHorizontal, PanelLeft, Square, X } from "lucide-react";
 import { Button } from "../components/ui/button";
 import {
   DropdownMenu,
@@ -48,6 +48,7 @@ export function TitleBar({
   title,
   actions,
   end,
+  more,
   sidebarOpen,
   onSidebar,
   devMode,
@@ -58,6 +59,7 @@ export function TitleBar({
   title: React.ReactNode;
   actions?: React.ReactNode;
   end?: React.ReactNode;
+  more?: React.ReactNode;
   sidebarOpen?: boolean;
   onSidebar?: () => void;
   devMode?: boolean;
@@ -84,7 +86,8 @@ export function TitleBar({
             className="titlebar-button"
             aria-label="Боковая панель"
             title="Боковая панель"
-            aria-pressed={!!sidebarOpen}
+            aria-expanded={!!sidebarOpen}
+            aria-controls="section-sidebar"
             onClick={onSidebar}
           >
             <PanelLeft />
@@ -109,6 +112,16 @@ export function TitleBar({
       <div className="titlebar-group titlebar-actions shell-header-actions">
         {actions}
         {end}
+        {more && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-lg" className="titlebar-button" aria-label="Ещё">
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="titlebar-more-menu">{more}</DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       {tauri && !mac && <WindowControls />}
     </header>

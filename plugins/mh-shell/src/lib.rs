@@ -1,4 +1,5 @@
-//! Built-in shell service: persistent limits and explicit one-shot commands.
+//! Built-in shell service: persistent limits, explicit one-shot commands and interactive terminals.
+pub mod terminal;
 use cordis::{Context, Plugin, Service};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -49,6 +50,7 @@ pub struct ShellResult {
 pub struct ShellService {
     config: minerva_plugin_host::config::ConfigStore,
     settings: Mutex<ShellSettings>,
+    pub terminals: terminal::Terminals,
 }
 impl Service for ShellService {
     const NAME: &'static str = "studio.shell";
@@ -66,6 +68,7 @@ impl ShellService {
         Ok(Self {
             config,
             settings: Mutex::new(settings),
+            terminals: Default::default(),
         })
     }
     pub async fn settings(&self) -> ShellSettings {

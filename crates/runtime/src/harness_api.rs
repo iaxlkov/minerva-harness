@@ -29,6 +29,17 @@ struct EditorFile {
     #[serde(default)] path: String,
     #[serde(default)] text: Option<String>,
     #[serde(default)] version: Option<String>,
+    #[serde(default)] query: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TerminalArgs {
+    session_id: String,
+    #[serde(default)] id: String,
+    #[serde(default)] data: String,
+    #[serde(default)] cursor: u64,
+    #[serde(default)] cols: u16,
+    #[serde(default)] rows: u16,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -163,7 +174,25 @@ impl Runtime {
                 }
                 Ok(Value::Null)
             }
-            "mh-editor.list" | "mh-editor.read" | "mh-editor.save" => {
+            "mh-terminal.open" | "mh-terminal.write" | "mh-terminal.read" | "mh-terminal.resize" | "mh-terminal.close" => {
+                let a: TerminalArgs = args(params)?;
+                self.sessions.get(&a.session_id)?;
+                if !harness.local { return Err("Terminal is unavailable in this profile".into()); }
+                let terminals = &self.plugins.shell()?.terminals;
+                match method {
+                    "mh-terminal.open" => {
+                        let projects=self.plugins.context().try_service::<crate::workspaces::WorkspaceService>().map_err(|e|e.to_string())?;
+                        let project=projects.list()?.into_iter().find(|p|p.session_ids.contains(&a.session_id)).ok_or("Workspace not found")?;
+                        let root=project.path.ok_or("Папка рабочего пространства не выбрана")?;
+                        encoded(terminals.open(std::path::Path::new(&root),a.cols,a.rows)?)
+                    }
+                    "mh-terminal.write" => terminals.write(&a.id,&a.data).map(|_| Value::Null),
+                    "mh-terminal.read" => terminals.read(&a.id,a.cursor),
+                    "mh-terminal.resize" => terminals.resize(&a.id,a.cols,a.rows).map(|_| Value::Null),
+                    _ => terminals.close(&a.id).map(|_| Value::Null),
+                }
+            }
+            "mh-editor.list" | "mh-editor.read" | "mh-editor.save" | "mh-editor.search" => {
                 let a: EditorFile = args(params)?;
                 self.sessions.get(&a.session_id)?;
                 if !harness.local { return Err("Editor is unavailable in this profile".into()); }
@@ -174,6 +203,7 @@ impl Runtime {
                 match method {
                     "mh-editor.list" => encoded(editor.list(root,&a.path)?),
                     "mh-editor.read" => editor.read(root,&a.path),
+                    "mh-editor.search" => editor.search(root,&a.query),
                     _ => editor.save(root,&a.path,a.version.as_deref().ok_or("Missing file version")?,a.text.as_deref().ok_or("Missing file text")?),
                 }
             }

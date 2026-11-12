@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
 
+mod keep_awake;
+
 use minerva_runtime::conversation;
 use minerva_runtime::plugins;
 use minerva_runtime::providers;
@@ -205,6 +207,7 @@ async fn run_shell_command(
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(keep_awake::KeepAwake::default())
         .setup(|app| {
             let icon = app
                 .default_window_icon()
@@ -275,12 +278,14 @@ fn main() {
             harness_rpc,
             shell_settings,
             save_shell_settings,
-            run_shell_command
+            run_shell_command,
+            keep_awake::set_keep_awake
         ])
         .build(tauri::generate_context!())
         .expect("Could not start OE Rig prototype");
     app.run(|handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            let _ = handle.state::<keep_awake::KeepAwake>().set(false);
             let _ = tauri::async_runtime::block_on(handle.state::<Arc<Runtime>>().shutdown());
         }
     });

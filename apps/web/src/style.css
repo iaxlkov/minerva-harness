@@ -347,7 +347,9 @@ button[data-slot^="composer-"]:focus-visible { outline:none; }
 .thread-empty { justify-content:center; }
 .thread-empty .viewport { flex:0 1 auto; padding-block:24px; }
 .thread-empty .empty { margin:0 auto; padding:0; }
-.thread-empty .composer-wrap { margin-bottom:clamp(20px,16vh,140px); }
+.thread-empty .composer-wrap { margin-bottom:auto; }
+/* Auto margins centre the empty state even where justify-content on the scroll container is ignored. */
+.thread-empty > .viewport { margin-top:auto; }
 .composer-wrap { container-type:inline-size; }
 .chat-composer { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:4px; padding:8px; }
 .chat-composer > .harness-attachments { grid-column:1/-1; }
@@ -359,7 +361,7 @@ button[data-slot^="composer-"]:focus-visible { outline:none; }
 .chat-composer [data-slot=composer-model-trigger] { max-width:160px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .chat-composer button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 @media(max-width:600px) {
- .thread-empty .composer-wrap { margin-bottom:24px; }
+ .thread-empty .composer-wrap { margin-bottom:auto; }
 }
 
 @container(max-width:600px) {
@@ -379,3 +381,25 @@ button[data-slot^="composer-"]:focus-visible { outline:none; }
  .chat-composer .session-access-trigger > svg:last-child { display:none; }
  .chat-composer .composer-access-actions > * { flex-shrink:0; }
 }
+/* Model picker sits under the composer, like the session meta row in desktop clients. */
+.composer-footer { display:flex; align-items:center; justify-content:flex-end; gap:12px; min-height:32px; padding:4px 8px 0; }
+.composer-footer-slot { flex:1; min-width:0; display:flex; align-items:center; gap:8px; }
+.composer-model-menu { min-width:240px; max-height:min(420px,var(--radix-dropdown-menu-content-available-height)); }
+.ds-dropdown-item-text { flex:1; min-width:0; display:flex; align-items:center; gap:8px; }
+.ds-dropdown-indicator { display:flex; color:var(--primary); }
+.ds-dropdown-sub-chevron { margin-left:auto; color:var(--muted-foreground); }
+.ds-dropdown-item .ds-dropdown-meta { margin-left:auto; color:var(--muted-foreground); }
+.ds-dropdown-item[data-state="open"] { background:var(--muted); }
+
+/* Ctrl/⌘+F find bar (assistant-ui conversation search) over the thread. */
+.thread-search { position:absolute; top:12px; right:16px; z-index:30; width:min(380px, calc(100% - 32px)); }
+.thread-search[hidden] { display:none; }
+.thread-search [data-slot="conversation-search"] { max-width:none; }
+::highlight(thread-search) { background-color:color-mix(in srgb, #f59e0b 30%, transparent); }
+::highlight(thread-search-active) { background-color:#f59e0b; color:#1c1b1a; }
+.message-code { margin:8px 0; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--secondary); font:12px/1.6 ui-monospace, monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.command-block { margin:8px 0; border:1px solid var(--border); border-radius:10px; background:var(--secondary); overflow:hidden; white-space:normal; }
+.command-block-head { display:flex; align-items:center; gap:6px; padding:4px 6px 4px 12px; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-size:11px; }
+.command-block-head > svg { width:13px; height:13px; }
+.command-block-head > span { margin-right:auto; text-transform:lowercase; }
+.command-block-code { margin:0; padding:10px 12px; font:12px/1.6 ui-monospace, monospace; color:var(--foreground); white-space:pre-wrap; overflow-wrap:anywhere; }

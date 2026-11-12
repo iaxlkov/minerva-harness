@@ -17,10 +17,11 @@ import type { BrowserPluginHost } from '../../../../packages/plugin-sdk/src/cont
 import type { JsonValue } from '../../../../packages/client/src/types.ts';
 import { invoke, clientScope } from '../client.ts';
 import { models, registerScopeCleanup } from './models.ts';
+import { canvas } from './canvas';
 
 export const sharedClientModules = {
   react: React, 'react/jsx-runtime': jsxRuntime, 'react-dom': ReactDOM,
-  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, Input, ...select, ...dropdown, ...sidebar, ...resizable, ...tooltip, ComposerMenuItem, ContextMenu },
+  'react-dom/client': ReactDOMClient, '@minerva/ui': { Button, Input, ...select, ...dropdown, ...sidebar, ...resizable, ...tooltip, ComposerMenuItem, ContextMenu, canvas },
 };
 export async function compileClientModule(source: string): Promise<ClientModuleFactory> {
   const url = URL.createObjectURL(new Blob([`export default function(require,module,exports){\n${source}\n}`], { type: 'text/javascript' }));

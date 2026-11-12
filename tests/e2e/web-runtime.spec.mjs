@@ -68,8 +68,8 @@ test('real Rust Host persists chat across reload and observes a run after the ta
   const second=await context.newPage();await second.goto(origin);
   await expect(second.getByRole('button',{name:'Новая сессия'})).toBeVisible();
   await rpc('session_set_model',{id:session.id,model:`api:${providerId}/fixture-other`});
-  await expect(page.getByRole('combobox',{name:'Модель',exact:true})).toContainText('fixture-other');
-  await expect(second.getByRole('combobox',{name:'Модель',exact:true})).toContainText('fixture-other');
+  await expect(page.getByRole('button',{name:'Модель',exact:true})).toContainText('fixture-other');
+  await expect(second.getByRole('button',{name:'Модель',exact:true})).toContainText('fixture-other');
   await second.close();
 
   providerDelay=2500;
@@ -99,7 +99,7 @@ test('real Rust Host persists chat across reload and observes a run after the ta
   await restored.getByRole('button',{name:'Настройки',exact:true}).click();
   await expect(restored.locator('.settings-screen')).toBeVisible();
   expect(await restored.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await restored.getByRole('button',{name:'Развернуть боковую панель'}).click();
+  await restored.getByRole('button',{name:'Боковая панель',exact:true}).click();
   await expect(restored.getByRole('dialog')).toBeVisible();
   await restored.getByRole('button',{name:'Серверы MCP',exact:true}).click();
   await expect(restored.getByRole('dialog')).toHaveCount(0);

@@ -48,7 +48,11 @@ import {
 } from "../components/ui/tooltip";
 import { useIsMobile } from "../hooks/use-mobile";
 import { TitleBar } from "./TitleBar";
+import { Canvas } from "./canvas";
+import { keepAwake, keepAwakeAvailable, useKeepAwake } from "./keepAwake";
+import { SwitchIndicator } from "../components/ui/switch";
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "../components/ui/dropdown-menu";
@@ -141,6 +145,8 @@ export function NavigationShell({
     setMobileOpen(false);
   }
   const slotProps = { section, onNavigate: navigate };
+  const keep = useKeepAwake();
+  const sessionAwake = keep.sessions.includes(session.id);
   const sectionSlot = (
     placement: "rail" | "sidebar" | "body" | "title",
     entryId?: string,
@@ -333,6 +339,29 @@ export function NavigationShell({
                       : sectionSlot("title", section)}
               </strong>
             }
+            more={
+              <>
+                <UiSlot
+                  slot="shell.titlebar.menu"
+                  scope={workspaceScope}
+                  componentProps={{ ...slotProps, sessionId: session.id }}
+                />
+                {host.slots.entries("shell.titlebar.menu", workspaceScope).length > 0 && <DropdownMenuSeparator />}
+                <DropdownMenuCheckboxItem
+                  className="titlebar-awake"
+                  checked={sessionAwake}
+                  disabled={!keepAwakeAvailable}
+                  onCheckedChange={(on) => keepAwake.setSession(session.id, on)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  <span className="ds-dropdown-item-text titlebar-awake-text">
+                    <span>Не давать уснуть</span>
+                    <small>{keepAwakeAvailable ? "Только для этой сессии, пока агент работает" : "Доступно в приложении для компьютера"}</small>
+                  </span>
+                  <SwitchIndicator checked={sessionAwake} />
+                </DropdownMenuCheckboxItem>
+              </>
+            }
             sidebarOpen={sidebarOpen}
             onSidebar={toggle}
             actions={
@@ -376,26 +405,6 @@ export function NavigationShell({
                 scope={workspaceScope}
                 componentProps={slotProps}
               />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rail-button sidebar-toggle"
-                title={
-                  sidebarOpen
-                    ? "Свернуть боковую панель"
-                    : "Развернуть боковую панель"
-                }
-                aria-label={
-                  sidebarOpen
-                    ? "Свернуть боковую панель"
-                    : "Развернуть боковую панель"
-                }
-                aria-expanded={sidebarOpen}
-                aria-controls="section-sidebar"
-                onClick={toggle}
-              >
-                {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
-              </Button>
               {railButton("settings", "Настройки", SettingsIcon)}
             </div>
           </nav>
@@ -448,8 +457,14 @@ export function NavigationShell({
                   componentProps={slotProps}
                 />
                 <div className="chat-view" hidden={section !== "chat" && section !== "mh-editor"}>
-                  {children}
+                  <div className="chat-main">{children}</div>
+                  {section === "chat" && (
+                    <Canvas {...slotProps} sessionId={session.id} placement="right" />
+                  )}
                 </div>
+                {section === "mh-editor" && (
+                  <Canvas {...slotProps} sessionId={session.id} placement="bottom" />
+                )}
                 {section === "mh-editor" && (
                   <div
                     className="chat-resize"

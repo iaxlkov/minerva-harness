@@ -17,7 +17,12 @@ export type RunSnapshot = { sessionId: string, runId: string, status: string, pa
 export type RunRequest = { model: string, lastMessageId: string, responseId: string, createdAt: string, options: JsonValue, };
 export type SessionRunResult = { parts: Array<ContentPart>, };
 export type ProviderConfig = { id: string, name: string, baseUrl: string, models: Array<string>, protocol: string, };
-export type ProviderView = { hasKey: boolean, id: string, name: string, baseUrl: string, models: Array<string>, protocol: string, };
+export type ProviderView = { hasKey: boolean,
+/**
+ * Per model, the reasoning settings a picker offers (`default`, `off`, effort levels),
+ * as DeepSeek Harness exposes `reasoning.efforts`; absent for models without controls.
+ */
+reasoning: { [key in string]: Array<string> }, id: string, name: string, baseUrl: string, models: Array<string>, protocol: string, };
 export type ProviderInput = { id: string, name: string, baseUrl: string, models: Array<string>, apiKey: string | null, isNew: boolean, protocol: string, };
 export type PluginInfo = { id: string, name: string, description: string, enabled: boolean, requestedEnabled: boolean, optionalEnabled: boolean, canToggle: boolean, origin: string, hasUi: boolean, error: string | null, };
 export type PluginModel = { id: string, name: string, group: string, isDefault: boolean, };

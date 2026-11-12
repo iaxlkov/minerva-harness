@@ -4,6 +4,7 @@ import type {EditorTabsSlotProps,ShellNavigationProps,ShellSectionProps} from '.
 import {workspacePlugin} from '../../../../plugins/mh-workspaces/ui';
 import {messageQueuePlugin} from '../../../../plugins/mh-message-queue/ui';
 import {editorPlugin} from '../plugins/editor';
+import {terminalPlugin} from '../plugins/terminal';
 import React, {createContext, useContext} from 'react';
 import type {ReactNode} from 'react';
 import {BrowserPluginHost, type Scope, type SlotName, type SlotSelection, type BrowserPluginContext} from '../../../../packages/plugin-sdk/src/index.ts';
@@ -37,6 +38,9 @@ export interface AppSlotProps {
  'shell.header.actions':ShellSlotProps;
  'shell.titlebar.start':ShellSlotProps;
  'shell.titlebar.end':ShellSlotProps;
+ 'shell.titlebar.menu':ShellSlotProps&{sessionId:string};
+ 'shell.canvas.actions':ShellSlotProps&{sessionId:string;placement:'right'|'bottom'};
+ 'shell.canvas.tabs':ShellSlotProps&{sessionId:string;placement:'right'|'bottom';part:'tab'|'body';selected:boolean};
  'shell.content.before':ShellSlotProps;
  'shell.content.after':ShellSlotProps;
  'editor.tabs.start':EditorTabsSlotProps;
@@ -54,6 +58,10 @@ export interface AppSlotProps {
  'tool.renderers':ToolCallMessagePartProps;
  'message.renderers':{children:ReactNode};
  'message.actions':{role:'user'|'assistant'};
+ 'message.code':{code:string;language:string;sessionId:string};
+ 'composer.model.menu':{model:string;onSelect:(model:string)=>void};
+ 'composer.footer':{model:string};
+ 'composer.image.tools':{name:string;render:()=>Promise<Blob>;replace:(image:Blob)=>void};
  'workspace.panels':{session:SessionInfo};
  'workspace.menu':{workspace:WorkspaceInfo;disabled:boolean;onClose:()=>void;onAction:(action:'rename'|'remove')=>void};
  'contextMenu.icon':{icon:{key:string;src?:string}};
@@ -64,7 +72,7 @@ export function registerUiSlot<K extends SlotName>(ctx:BrowserPluginContext,slot
 export async function createBrowserComposition(selection:SlotSelection={}){
  const host=new BrowserPluginHost(selection);
  await host.activate([{id:'minerva-ui',apply(ctx){ctx.slots.register('root.layout',{entryId:'default',component:({children}:{children:ReactNode})=><>{children}</>});}}]);
- await host.activate([skillsPlugin(workspaceScope),workspacePlugin(workspaceScope),editorPlugin(workspaceScope),interactionsPlugin(workspaceScope),messageQueuePlugin(workspaceScope)]);
+ await host.activate([skillsPlugin(workspaceScope),workspacePlugin(workspaceScope),editorPlugin(workspaceScope),terminalPlugin(workspaceScope),interactionsPlugin(workspaceScope),messageQueuePlugin(workspaceScope)]);
  return host;
 }
 export function UiSlot<K extends SlotName>({slot,scope,entryId,componentProps,fallback}: {slot:K;scope:Scope;entryId?:string;componentProps?:AppSlotProps[K];fallback?:ReactNode}){

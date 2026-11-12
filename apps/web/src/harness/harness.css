@@ -1,7 +1,7 @@
 .harness-session{flex:none;min-width:0;padding:8px 24px;color:var(--muted-foreground);border-bottom:1px solid var(--border);font-size:13px;max-height:40vh;}.harness-interaction{padding:12px;margin-top:8px;border:1px solid var(--border);border-radius:8px}.harness-interaction p{white-space:pre-wrap;overflow-wrap:anywhere}.harness-interaction small{display:block}.harness-interaction label{display:flex;gap:8px;margin:8px 0}.harness-interaction input:not([type=radio]){border:1px solid var(--border);padding:6px;border-radius:4px}.harness-attachments{display:flex;gap:8px;flex-wrap:wrap}.harness-attachment{display:flex;align-items:center;gap:6px}.harness-attachment img{max-width:80px;max-height:80px;object-fit:contain}.harness-session [role=alert]{color:var(--destructive)}
 
-.harness-attachments:not(:empty) { padding:12px 16px 4px; }
-.harness-attachment { max-width:100%; padding:6px; border:1px solid var(--border); border-radius:8px; font-size:12px; overflow-wrap:anywhere; }
+/* Tiles line up with the "+" icon (8px composer padding + 8px) and leave room for the corner remove button. */
+.harness-attachments:not(:empty) { padding:8px 8px 4px; }
 .harness-interaction { color:var(--foreground); }
 .harness-interaction .provider-actions { margin-top:12px; }
 .harness-interaction input:not([type=radio]) { min-width:0; background:var(--input); color:var(--foreground); }

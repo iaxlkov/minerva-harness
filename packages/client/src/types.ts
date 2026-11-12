@@ -19,6 +19,12 @@ export interface Endpoints {
  'mh-editor.list':Endpoint<{sessionId:string;path?:string},{name:string;path:string;directory:boolean}[]>;
  'mh-editor.read':Endpoint<{sessionId:string;path:string},{text:string;version:string;mimeType?:string;data?:string;readOnlyReason?:string}>;
  'mh-editor.save':Endpoint<{sessionId:string;path:string;text:string;version:string},{version:string}>;
+ 'mh-editor.search':Endpoint<{sessionId:string;query:string},{files:string[];matches:{path:string;line:number;column:number;text:string}[];truncated:boolean}>;
+ 'mh-terminal.open':Endpoint<{sessionId:string;cols:number;rows:number},string>;
+ 'mh-terminal.write':Endpoint<{sessionId:string;id:string;data:string},null>;
+ 'mh-terminal.read':Endpoint<{sessionId:string;id:string;cursor:number},{data:string;cursor:number;exited:boolean}>;
+ 'mh-terminal.resize':Endpoint<{sessionId:string;id:string;cols:number;rows:number},null>;
+ 'mh-terminal.close':Endpoint<{sessionId:string;id:string},null>;
  'mh-lsp.open':Endpoint<{sessionId:string;path:string;version:number;text:string},string>;
  'mh-lsp.change':Endpoint<{sessionId:string;path:string;version:number;text:string},null>;
  'mh-lsp.close':Endpoint<{sessionId:string;path:string},null>;

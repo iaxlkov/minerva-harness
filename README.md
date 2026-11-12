@@ -77,6 +77,16 @@ npm ci
 npm run tauri:dev
 ```
 
+На Linux (Ubuntu 24.04 / Debian) нужны Node.js 24, Rust stable и системные библиотеки WebKitGTK. Запуск тот же, что на macOS:
+
+```sh
+sudo apt install -y build-essential libssl-dev libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev pkg-config
+npm ci
+npm run tauri:dev
+```
+
+В виртуальной машине без 3D-ускорения окно может остаться пустым; тогда запускайте с `WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri:dev`.
+
 
 Tauri собирает Rust, Vite обслуживает интерфейс с HMR на `127.0.0.1:1420`. Порт должен быть свободен; старую экспериментальную копию одновременно не запускайте.
 

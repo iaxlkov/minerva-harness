@@ -103,7 +103,7 @@ fn bytes(root: &Path, path: &str, limit: u64) -> Result<Vec<u8>, String> {
         .read_to_end(&mut data)
         .map_err(|e| e.to_string())?;
     if data.len() as u64 > limit {
-        return Err(format!("File exceeds {} MB", limit / 1_000_000));
+        return Err(format!("Файл больше {} МБ", limit / 1_000_000));
     }
     Ok(data)
 }
@@ -165,6 +165,70 @@ fn decode_non_utf8(data: &[u8]) -> Option<(Cow<'_, str>, String)> {
     Some((text, format!("{label}: {}", encoding.name())))
 }
 impl EditorService {
+    /// Case-insensitive search over file names and file lines in the workspace.
+    /// Bounded like the agent's `search_files`: skips VCS/build folders, binaries and large files.
+    pub fn search(&self, root: &Path, query: &str) -> Result<serde_json::Value, String> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() || needle.len() > 256 {
+            return Err("Invalid search query".into());
+        }
+        let (dir, _) = scoped(root, "", true)?;
+        let (mut files, mut matches, mut scanned, mut truncated) = (Vec::new(), Vec::new(), 0usize, false);
+        let mut pending = vec![PathBuf::new()];
+        'walk: while let Some(path) = pending.pop() {
+            let entries = if path.as_os_str().is_empty() { dir.entries() } else { dir.read_dir(&path) };
+            let Ok(entries) = entries else { continue };
+            for entry in entries.flatten() {
+                scanned += 1;
+                if scanned > 20_000 || matches.len() >= 300 {
+                    truncated = true;
+                    break 'walk;
+                }
+                let Ok(name) = entry.file_name().into_string() else { continue };
+                if matches!(name.as_str(), ".git" | "node_modules" | "target") {
+                    continue;
+                }
+                let Ok(kind) = entry.file_type() else { continue };
+                let relative = path.join(&name);
+                let shown = relative.to_string_lossy().replace('\\', "/");
+                if kind.is_dir() {
+                    pending.push(relative);
+                    continue;
+                }
+                if !kind.is_file() {
+                    continue;
+                }
+                if name.to_lowercase().contains(&needle) && files.len() < 100 {
+                    files.push(shown.clone());
+                }
+                if entry.metadata().map_or(true, |meta| meta.len() > 1_000_000) {
+                    continue;
+                }
+                let mut data = Vec::new();
+                if dir.open(&relative).and_then(|mut file| file.read_to_end(&mut data)).is_err() || data.contains(&0) {
+                    continue;
+                }
+                let text = String::from_utf8_lossy(&data);
+                let mut in_file = 0;
+                for (index, line) in text.lines().enumerate() {
+                    let lower = line.to_lowercase();
+                    let Some(at) = lower.find(&needle) else { continue };
+                    matches.push(serde_json::json!({
+                        "path": shown, "line": index + 1,
+                        "column": lower[..at].chars().count() + 1,
+                        "text": line.trim_end().chars().take(300).collect::<String>(),
+                    }));
+                    in_file += 1;
+                    if in_file >= 50 || matches.len() >= 300 {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+        }
+        files.sort();
+        Ok(serde_json::json!({"files": files, "matches": matches, "truncated": truncated}))
+    }
     pub fn list(&self, root: &Path, path: &str) -> Result<Vec<Entry>, String> {
         let (dir, relative) = scoped(root, path, true)?;
         let selected = dir.open_dir(&relative).map_err(|e| e.to_string())?;
@@ -218,7 +282,7 @@ impl EditorService {
             }));
         }
         if data.len() > TEXT_LIMIT {
-            return Err("File exceeds 2 MB".into());
+            return Err("Файл больше 2 МБ: редактор открывает текстовые файлы до 2 МБ".into());
         }
         Ok(match editable_text(&data) {
             Ok(text) => serde_json::json!({"text":text,"version":version}),
@@ -237,7 +301,7 @@ impl EditorService {
         text: &str,
     ) -> Result<serde_json::Value, String> {
         if text.len() > TEXT_LIMIT {
-            return Err("File exceeds 2 MB".into());
+            return Err("Файл больше 2 МБ: сохранение отменено".into());
         }
         let _lock = mh_workspace_tools::EDIT_LOCK
             .lock()
@@ -376,6 +440,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn searches_names_and_lines_case_insensitively() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("docs/node_modules")).unwrap();
+        std::fs::write(root.path().join("docs/Search-Notes.md"), "intro\n  Find ME here\n").unwrap();
+        std::fs::write(root.path().join("docs/node_modules/hidden.md"), "find me").unwrap();
+        std::fs::write(root.path().join("blob.bin"), b"find me\0").unwrap();
+        let service = EditorService;
+        let found = service.search(root.path(), "find me").unwrap();
+        assert_eq!(found["matches"].as_array().unwrap().len(), 1, "{found}");
+        assert_eq!(found["matches"][0]["path"], "docs/Search-Notes.md");
+        assert_eq!(found["matches"][0]["line"], 2);
+        assert_eq!(found["matches"][0]["column"], 3);
+        assert_eq!(service.search(root.path(), "SEARCH-notes").unwrap()["files"][0], "docs/Search-Notes.md");
+        assert!(service.search(root.path(), "  ").is_err());
+    }
     #[test]
     fn detects_legacy_and_bom_encodings_for_read_only_preview() {
         let root = tempfile::tempdir().unwrap();

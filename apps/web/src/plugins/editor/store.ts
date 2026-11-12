@@ -9,7 +9,7 @@ import {invoke} from '../../client';
 (globalThis as typeof globalThis & {MonacoEnvironment?:unknown}).MonacoEnvironment={getWorker:(_id:string,label:string)=>label==='json'?new JsonWorker():['css','scss','less'].includes(label)?new CssWorker():['html','handlebars','razor'].includes(label)?new HtmlWorker():['typescript','javascript'].includes(label)?new TsWorker():new EditorWorker()};
 // sessionId owns the file (its workspace answers read/save/LSP); view is the editor whose tabs show it.
 export type Doc={key:string;view:string;path:string;sessionId:string;model:monaco.editor.ITextModel;diskVersion:string;saved:string;lspVersion:number;lsp:boolean;pending:Promise<void>;error:string;preview?:{url:string;mime:string;size:number};readOnlyReason?:string;transient:boolean};
-export type State={docs:Doc[];active:string;error:string;loading:string;pin:string};
+export type State={docs:Doc[];active:string;error:string;loading:string;pin:string;reveal?:{key:string;line:number;column:number}};
 export function textOf(doc:Doc){return doc.model.getValue(monaco.editor.EndOfLinePreference.TextDefined,true);}
 const states=new Map<string,State>();const listeners=new Set<()=>void>();let tick=0;
 window.addEventListener('beforeunload',event=>{if([...states.values()].some(s=>s.docs.some(doc=>textOf(doc)!==doc.saved))){event.preventDefault();event.returnValue='';}});
@@ -47,6 +47,11 @@ export async function open(view:string,path:string,pin=false,sessionId=view){
     if(model.getValue()!==initialText){doc.lspVersion++;await invoke('mh-lsp.change',{sessionId,path,version:doc.lspVersion,text:model.getValue()});}
   }catch(e){if((e instanceof Error?e.message:String(e))!=='No language server for file')doc.error=`LSP: ${String(e)}`;}changed();})();await doc.pending;
  }catch(e){s.error=String(e);}finally{s.loading='';changed();}
+}
+/** Opens a file and asks the editor to put the cursor on `line`/`column` (search results). */
+export async function openAt(view:string,path:string,sessionId:string,line:number,column:number){
+ await open(view,path,false,sessionId);
+ state(view).reveal={key:docKey(sessionId,path),line,column};changed();
 }
 export async function save(doc:Doc){
  if(doc.preview||doc.readOnlyReason)return;

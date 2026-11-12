@@ -176,6 +176,10 @@ pub(crate) async fn run_inner(
             },
             context: manager.harness.context.clone(),
             messages,
+            reasoning_effort: match request.options.get("reasoningEffort") {
+                None => None,
+                Some(value) => Some(value.as_str().filter(|s| !s.is_empty() && s.len() <= 32).ok_or("invalid reasoningEffort")?.to_owned()),
+            },
             tool_context: crate::tools::ToolContext {
                 session_id: id.into(),
                 run_id: request.response_id.clone(),

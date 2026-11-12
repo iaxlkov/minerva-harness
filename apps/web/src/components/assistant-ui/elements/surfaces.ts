@@ -7,4 +7,5 @@ export const inkButton =
 export const iconSwap =
   "[grid-area:1/1] oe-transition-[opacity,scale,filter] oe-duration-200 oe-ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:oe-transition-none";
 export const iconSwapIn = "oe-scale-100 oe-opacity-100 oe-blur-none";
-export const iconSwapOut = "oe-scale-[0.25] oe-opacity-0 oe-blur-[4px]";
+export const iconSwapOut = "oe-scale-[0.25] oe-opacity-0 oe-blur-[4px]";export const field = "oe-bg-[color:color-mix(in_srgb,var(--foreground)_6%,transparent)] forced-colors:oe-border";
+export const mono = "oe-font-mono oe-text-[11px] oe-tracking-tight";

@@ -117,7 +117,14 @@ ctx.slots.register('shell.sections', {
 | `shell.sidebar.content` | После основной навигации раздела |
 | `shell.sidebar.footer` | Низ боковой панели |
 | `shell.header.actions` | Действия справа в шапке окна |
+| `composer.model.menu` | Пункты в конце меню модели (session scope, props `{model, onSelect}`; используйте `DropdownMenuItem` из `@minerva/ui`) |
+| `composer.image.tools` | Кнопки в панели редактора прикреплённой картинки (например, «Удалить фон»). Props `{name, render, replace}`: `render()` отдаёт текущую картинку с разметкой (PNG), `replace(blob)` подменяет исходник и сбрасывает разметку |
+| `composer.footer` | Строка под полем ввода слева от выбора модели (session scope, props `{model}`) |
+| `message.code` | Keyed по языку блока кода ```` ``` ```` в сообщении (workspace scope; все диалекты оболочки — ключ `shell`); props `{code, language, sessionId}`. Терминал регистрирует `shell` с кнопкой «Выполнить» |
 | `message.actions` | Кнопки на панели сообщения при наведении (session scope, props `{role}`; внутри доступны хуки assistant-ui для текущего сообщения) |
+| `shell.canvas.actions` | Пункты меню «+» в полосе вкладок боковой панели (props `{section, onNavigate, sessionId, placement}`; используйте `DropdownMenuItem`) |
+| `shell.canvas.tabs` | Keyed: вкладка боковой панели (справа от чата, снизу в режиме разработки). Компонент вызывается с `part:'tab'` для заголовка вкладки и `part:'body'` для содержимого; props `{section, onNavigate, sessionId, placement, part, selected}`. Открыть вкладку: `canvas.open(entryId)` из `apps/web/src/app/canvas` |
+| `shell.titlebar.menu` | Пункты меню «⋯» в шапке над свитчем «Не давать уснуть» (props `{section, onNavigate, sessionId}`; используйте `DropdownMenuItem` из `@minerva/ui`) |
 | `shell.titlebar.start` / `shell.titlebar.end` | Шапка окна: после кнопки меню / перед кнопками окна (индикаторы сервисов) |
 | `shell.content.before` / `shell.content.after` | До / после основного содержимого |
 
@@ -198,3 +205,20 @@ Shift+F10 или ContextMenu, сохраняет цель до закрытия 
 - [DSH settings rendering](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/client/ui-settings-general/src/client/SettingsRoot.tsx)
 
 DSH распространяется по MIT, copyright 2026 DeepSeek. В этой реализации его исходный код не копируется: сохраняются архитектурные принципы и используется существующий Minerva plugin SDK.
+
+## Боковая панель (canvas)
+
+Справа от чата (в режиме разработки — под редактором) находится панель с вкладками.
+Постоянную вкладку плагин регистрирует в keyed-слоте `shell.canvas.tabs`. Вкладку с
+произвольным содержимым — разметкой, виджетом, фреймом — можно открыть в любой момент:
+
+```tsx
+const {canvas} = require('@minerva/ui');
+canvas.show({id: 'my-plugin:report', title: 'Отчёт', icon: <ChartIcon/>,
+  render: ({sessionId, placement}) => <Report sessionId={sessionId}/>});
+canvas.closeTab('my-plugin:report');
+```
+
+`show` с тем же `id` заменяет содержимое вкладки и делает её активной. Такие вкладки
+закрываются крестиком и не переживают перезагрузку окна. Действия, открывающие вкладки,
+удобно класть в меню «+» через слот `shell.canvas.actions`.

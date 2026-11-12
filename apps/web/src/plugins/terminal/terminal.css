@@ -1,0 +1,11 @@
+.terminal-panel { flex:1; min-height:0; display:flex; flex-direction:column; }
+.terminal-toolbar { flex:none; display:flex; align-items:center; gap:8px; height:32px; padding:0 6px 0 14px; color:var(--muted-foreground); font-size:12px; }
+.terminal-toolbar-actions { display:flex; gap:2px; margin-left:auto; }
+.terminal-toolbar [data-slot="button"] { color:var(--muted-foreground); }
+.terminal-cwd { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.terminal-note { flex:none; display:flex; align-items:center; gap:12px; margin:0; padding:8px 14px; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-size:12px; }
+.terminal-note[role=alert] { color:var(--destructive); }
+.terminal-note > span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.terminal-host { flex:1; min-height:0; padding:4px 0 4px 12px; }
+.terminal-host .xterm { height:100%; }
+.terminal-host .xterm-viewport { scrollbar-width:thin; scrollbar-color:var(--muted-foreground) transparent; }

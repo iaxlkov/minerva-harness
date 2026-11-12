@@ -88,6 +88,7 @@ fn run(
     cancellation: Cancellation,
 ) -> ProviderRunContext {
     ProviderRunContext {
+        reasoning_effort: None,
         session_id: "session".into(),
         run_id: "run".into(),
         tools: tools.snapshot(),

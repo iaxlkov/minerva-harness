@@ -33,6 +33,33 @@ pub struct ProviderView {
     #[serde(flatten)]
     provider: Provider,
     has_key: bool,
+    /// Per model, the reasoning settings a picker offers (`default`, `off`, effort levels),
+    /// as DeepSeek Harness exposes `reasoning.efforts`; absent for models without controls.
+    reasoning: std::collections::BTreeMap<String, Vec<String>>,
+}
+/// The rig catalog entry for `model` on `provider`, found by vendor.
+// shortcut: vendor is guessed from protocol and base URL; add an explicit vendor field when a gateway is misread.
+fn catalog_spec(provider: &Provider, model: &str) -> Option<&'static rig_core::catalog::ModelSpec> {
+    let url = provider.base_url.to_ascii_lowercase();
+    let vendor = match provider.protocol.as_str() {
+        "anthropic-messages" => "anthropic",
+        "ollama" => "ollama",
+        _ if url.contains("deepseek") => "deepseek",
+        _ if url.contains("openrouter") => "openrouter",
+        _ if url.contains("api.openai.com") => "openai",
+        _ => provider.id.as_str(),
+    };
+    rig_core::catalog::Catalog::builtin()
+        .resolve(&format!("{vendor}/{model}"))
+        .ok()
+        .map(|resolved| resolved.spec)
+}
+/// Choice names the catalog lists for `model`; empty when only the provider default exists.
+fn reasoning_choices(provider: &Provider, model: &str) -> Vec<String> {
+    let choices: Vec<String> = catalog_spec(provider, model)
+        .map(|spec| spec.reasoning.choices().iter().map(|c| c.name.to_owned()).collect())
+        .unwrap_or_default();
+    if choices.len() > 1 { choices } else { Vec::new() }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -235,6 +262,14 @@ impl ProviderService {
             .cloned()
             .map(|p| ProviderView {
                 has_key: self.has_key(&p),
+                reasoning: p
+                    .models
+                    .iter()
+                    .filter_map(|m| {
+                        let choices = reasoning_choices(&p, m);
+                        (!choices.is_empty()).then(|| (m.clone(), choices))
+                    })
+                    .collect(),
                 provider: p,
             })
             .collect()
@@ -487,6 +522,7 @@ impl ProviderService {
         let mut identity_hook = crate::tools::AdmittedTools::default().identity_hook();
         let mut image_generation_admitted = false;
         let streaming = run.is_some();
+        let reasoning_effort = run.as_ref().and_then(|r| r.reasoning_effort.clone());
         let cancellation = run.as_ref().map(|r| r.tool_context.cancellation.clone());
         if let Some(mut run) = run {
             image_generation_admitted = run.tools.definitions().iter().any(|tool| tool.name == "generate_image");
@@ -502,15 +538,35 @@ impl ProviderService {
             });
         }
         let has_tools = !dynamic_tools.is_empty();
+        let reasoning = match reasoning_effort.as_deref() {
+            None | Some("default") => None,
+            Some(name) => catalog_spec(&provider, model)
+                .ok_or("Для этой модели нельзя выбрать уровень размышления.")?
+                .reasoning
+                .named(name)
+                .map_err(|e| format!("Уровень размышления недоступен: {e}"))?
+                .reasoning,
+        };
+        // A token budget must fit under the output cap, so lift the cap above it.
+        let budget_cap = match reasoning {
+            Some(rig_core::completion::Reasoning::Budget { tokens }) => Some(u64::from(tokens) + 4096),
+            _ => None,
+        };
         macro_rules! run_agent {
             ($model:expr) => {{
                 let builder = AgentBuilder::new($model)
                     .preamble(PREAMBLE)
                     .dynamic_tools(dynamic_tools);
-                let builder = if provider.protocol == "anthropic-messages" || (streaming && !has_tools) {
+                let builder = if let Some(cap) = budget_cap {
+                    builder.max_tokens(cap)
+                } else if provider.protocol == "anthropic-messages" || (streaming && !has_tools) {
                     builder.max_tokens(4096)
                 } else {
                     builder
+                };
+                let builder = match reasoning {
+                    Some(reasoning) => builder.reasoning(reasoning),
+                    None => builder,
                 };
                 let agent = builder.build();
                 let mut request = agent.prompt(prompt).history(history).add_hook(hook.clone());
@@ -607,6 +663,23 @@ fn same_endpoint(saved: &Provider, input: &ProviderInput) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reasoning_choices_come_from_the_rig_catalog() {
+        let provider = |protocol: &str, base_url: &str| Provider {
+            id: "custom".into(),
+            name: "Custom".into(),
+            base_url: base_url.into(),
+            models: Vec::new(),
+            protocol: protocol.into(),
+        };
+        let anthropic = provider("anthropic-messages", "https://api.anthropic.com");
+        let choices = reasoning_choices(&anthropic, "claude-sonnet-4-5");
+        assert_eq!(choices.first().map(String::as_str), Some("default"));
+        assert!(choices.len() > 1, "{choices:?}");
+        let deepseek = provider("openai-chat", "https://api.deepseek.com");
+        assert!(catalog_spec(&deepseek, "deepseek-v4-pro").is_some());
+        assert!(reasoning_choices(&provider("openai-chat", "https://example.test"), "unknown-model").is_empty());
+    }
     use super::*;
     use std::io::{Read, Write};
     #[test]
@@ -1027,4 +1100,6 @@ pub struct AgentRunContext {
     pub tool_context: crate::tools::ToolContext,
     pub context: Arc<context::ContextService>,
     pub messages: Vec<crate::sessions::SessionMessage>,
+    /// A choice name from `ProviderView::reasoning`; `None` keeps the provider default.
+    pub reasoning_effort: Option<String>,
 }
