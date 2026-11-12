@@ -42,9 +42,9 @@ test('master switch pauses selection, preserves diagnostics and reports failures
  await expect(row('Manager').locator('.plugin-status')).toHaveText('Работает');
  await expect(row('Selected').locator('.plugin-status')).toHaveText('Приостановлен');
  await expect(row('Failed').getByRole('alert')).toHaveText('process exited');
- await row('Selected').getByRole('button',{name:'Отключить',exact:true}).click();
+ await row('Selected').getByRole('switch').click();
  await expect(row('Selected').locator('.plugin-status')).toHaveText('Отключён');
- await row('Off').getByRole('button',{name:'Включить',exact:true}).click();
+ await row('Off').getByRole('switch').click();
  await expect(row('Off').locator('.plugin-status')).toHaveText('Приостановлен');
  await master.click();
  await expect(row('Selected').locator('.plugin-status')).toHaveText('Отключён');

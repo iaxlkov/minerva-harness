@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '../client.ts';
 import { Button } from '../components/ui/button';
+import { Loader2, X } from 'lucide-react';
+import { TitleBar } from './TitleBar';
 import type { SessionInfo, PluginModel } from '../../../../packages/client/src/types.ts';
 import { Chat } from '../pages/chat/Chat';
 import { models } from './models';
@@ -91,6 +93,6 @@ export function App() {
     selectModel(preferred.id);
   },[session?.id,model,availablePluginModels]);
 
-  if(!session)return <div className="oe-studio session-startup" role="status">{sessionLoading?'Загружаем историю…':sessionError||'Нет доступных диалогов'}{!sessionLoading&&<Button variant="outline" onClick={()=>void createSession()}>Повторить</Button>}</div>;
-  return <>{sessionError&&<div className="session-error" role="alert">{sessionError}<button aria-label="Закрыть уведомление" onClick={()=>setSessionError('')}>×</button></div>}<Chat session={session} sessions={sessions} onSession={selectSession} onSaved={()=>void refreshSessions()} onError={setSessionError} model={model} configured={configured} providers={providers} pluginModels={availablePluginModels} onSelect={selectModel} onProviders={setProviders} activePlugins={activePlugins} onNew={workspaceId=>void createSession(workspaceId)}/></>;
+  if(!session)return <div className="oe-studio session-startup"><TitleBar title={<strong>Minerva</strong>}/><div className="session-startup-body" role="status">{sessionLoading&&<Loader2 className="oe-animate-spin" size={18} aria-hidden="true"/>}{sessionLoading?'Загружаем историю…':sessionError||'Нет доступных диалогов'}{!sessionLoading&&<Button variant="outline" onClick={()=>void createSession()}>Повторить</Button>}</div></div>;
+  return <>{sessionError&&<div className="session-error" role="alert">{sessionError}<Button variant="ghost" size="icon-sm" aria-label="Закрыть уведомление" onClick={()=>setSessionError('')}><X/></Button></div>}<Chat session={session} sessions={sessions} onSession={selectSession} onSaved={()=>void refreshSessions()} onError={setSessionError} model={model} configured={configured} providers={providers} pluginModels={availablePluginModels} onSelect={selectModel} onProviders={setProviders} activePlugins={activePlugins} onNew={workspaceId=>void createSession(workspaceId)}/></>;
 }

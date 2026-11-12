@@ -1,0 +1,26 @@
+.titlebar { flex:none; display:flex; align-items:center; gap:12px; height:44px; padding:0 8px; background:var(--sidebar-rail); color:var(--muted-foreground); user-select:none; -webkit-user-select:none; }
+.titlebar-mac { padding-left:80px; }
+.titlebar-group { flex:none; display:flex; align-items:center; gap:2px; }
+.titlebar .titlebar-button, .titlebar-actions [data-slot="button"] { color:var(--muted-foreground); border-radius:8px; }
+.titlebar .titlebar-button:hover, .titlebar-actions [data-slot="button"]:hover { color:var(--foreground); }
+.titlebar-modes { flex:none; display:flex; gap:2px; padding:2px; border:1px solid var(--border); border-radius:10px; }
+.titlebar-modes [data-slot="button"] { color:var(--muted-foreground); border-radius:7px; }
+.titlebar-modes [aria-pressed="true"] { background:var(--secondary); color:var(--foreground); }
+.titlebar-lead { flex:none; display:flex; align-items:center; gap:12px; min-width:max-content; height:100%; }
+/* The title starts where the main panel's content does: rail (56px) + sidebar + 1px divider, minus the bar padding. */
+.navigation-shell:not(.sidebar-collapsed) .titlebar-lead { width:calc(var(--sidebar-width) + 49px); }
+.navigation-shell:not(.sidebar-collapsed) .titlebar-mac .titlebar-lead { width:calc(var(--sidebar-width) - 23px); }
+.titlebar-title { flex:1; min-width:0; display:flex; align-items:center; height:100%; padding-left:16px; font-size:13px; }
+/* 12px bar gap + 12px = the 24px content inset of the main panel. */
+.navigation-shell:not(.sidebar-collapsed) .titlebar-title { padding-left:12px; }
+/* Text must not swallow mouse-down, or window dragging stops working over the title. */
+.titlebar-title > * { pointer-events:none; }
+.titlebar-title strong { color:var(--foreground); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.window-controls { flex:none; display:flex; align-items:center; gap:8px; padding:0 4px 0 8px; }
+.window-controls button { width:24px; height:24px; padding:0; display:grid; place-items:center; border:0; border-radius:50%; background:var(--muted); color:var(--muted-foreground); }
+.window-controls button:hover { background:var(--secondary); color:var(--foreground); filter:brightness(1.25); }
+.window-controls button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.window-controls .window-close:hover { background:#c42b1c; color:#fff; filter:none; }
+.window-controls svg { width:12px; height:12px; }
+.window-controls svg.window-restore { width:11px; height:11px; transform:scaleX(-1); }
+@media (max-width:639px) { .titlebar { gap:6px; } .navigation-shell .titlebar-lead { width:auto; } .navigation-shell .titlebar-title { padding-left:4px; } }

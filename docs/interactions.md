@@ -1,7 +1,7 @@
 # Вопросы и разрешения
 
 Встроенный browser-плагин `plugins/mh-interactions/ui` подключает селектор доступа
-в `composer.access`, панель контекста и вопросов в `session.controls`, а подтверждения
+в `composer.access`, панель вопросов в `session.controls`, а подтверждения
 конкретных вызовов — в `tool.interactions`. Композитор и сообщения остаются
 assistant-ui. Отключение UI-плагина не выдаёт разрешений.
 
